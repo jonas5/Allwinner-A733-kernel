@@ -136,6 +136,12 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/orangepi-xunlong/orangepi-build.git orangepi-build
           git -C orangepi-build apply ../patch/0103-uboot-sun60iw2-a733-boot0-uart.patch
+      - name: Copy boot0 UART fix script
+        if: steps.check-kernel.outputs.should_skip != " true && github.event.inputs.reuse_run_id == \
+ run: |
+ mkdir -p orangepi-build/external/packages/pack-uboot/sun60iw2/tools
+ cp tools/fix_boot0_uart orangepi-build/external/packages/pack-uboot/sun60iw2/tools/
+ chmod +x orangepi-build/external/packages/pack-uboot/sun60iw2/tools/fix_boot0_uart
 
           # Copy unified mainline kernel patch & builddeb packaging patch
           mkdir -p orangepi-build/external/patch/kernel/sun60iw2-next
