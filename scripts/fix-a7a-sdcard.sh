@@ -26,13 +26,20 @@ CLEANUP_MOUNT=0
 MNT=""
 RAW_DEV=""
 
-if [ -b "$TARGET" ]; then
-  RAW_DEV="$TARGET"
-  PART="${TARGET}1"
-  [ -b "$PART" ] || PART="${TARGET}p1"
-  if [ ! -b "$PART" ]; then
-    echo "[-] Could not find partition 1 on $TARGET"
-    exit 1
+if [ -b "" ]; then
+  if [[ "" =~ [0-9]p[0-9]+$ ]] || [[ "" =~ [a-z]+[0-9]+$ ]]; then
+    PART=""
+    RAW_DEV=""
+    [[ "" == "" ]] && RAW_DEV=""
+  else
+    RAW_DEV=""
+    PART="1"
+    [ -b "" ] || PART="p1"
+    if [ ! -b "" ]; then
+      echo "[-] Could not find partition 1 on "
+      exit 1
+    fi
+  fi
   fi
   if grep -qs "^$PART " /proc/mounts; then
     umount -l "$PART" || true
