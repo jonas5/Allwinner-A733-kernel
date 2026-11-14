@@ -34,19 +34,19 @@ fi
 if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 
 # Console configuration:
-# serial:  UART ttyS0 only (leaves HDMI completely free of kernel logs for clean bootsplash)
-# display: HDMI tty1 only
-# both:    UART ttyS0 + HDMI tty1 (verbose debug mode)
-if test "${console}" = "display"; then setenv consoleargs "console=tty1"; fi
-if test "${console}" = "serial"; then setenv consoleargs "console=ttyS0,115200"; fi
-if test "${console}" = "both"; then setenv consoleargs "console=ttyS0,115200 console=tty1"; fi
+# serial:  UART ttyS0 + HDMI tty2 for console/systemd (keeps tty1 reserved for clean bootsplash)
+# display: HDMI tty2 only
+# both:    UART ttyS0 + HDMI tty2 (verbose debug mode)
+if test "${console}" = "display"; then setenv consoleargs "console=tty2"; fi
+if test "${console}" = "serial"; then setenv consoleargs "console=ttyS0,115200 console=tty2"; fi
+if test "${console}" = "both"; then setenv consoleargs "console=ttyS0,115200 console=tty2"; fi
 
 if test "${earlycon}" = "on"; then setenv consoleargs "earlyprintk=sunxi-uart,0x02500000 ${consoleargs}"; fi
 
 if test "${bootlogo}" = "true"; then
 	setenv consoleargs "quiet splash plymouth.ignore-serial-consoles vt.global_cursor_default=0 systemd.show_status=auto rd.udev.log_level=3 ${consoleargs}"
 else
-	setenv consoleargs "splash=verbose console=tty1 ${consoleargs}"
+	setenv consoleargs "splash=verbose ${consoleargs}"
 fi
 
 part uuid ${devtype} ${devnum}:1 partuuid
