@@ -43,7 +43,6 @@ def load_bmp(bmp_path):
     h_abs = abs(h)
     row_stride = (w * (bpp // 8) + 3) & (~3)
     pixels = []
-    # BMP stored bottom-to-top if h > 0
     raw_pixels = data[offset:]
     for y in range(h_abs):
         actual_y = (h_abs - 1 - y) if h > 0 else y
@@ -57,10 +56,34 @@ def sig_handler(signum, frame):
     global running
     running = False
 
+def hide_cursor_and_cls():
+    # Hide blinking cursor and clear screen on virtual terminals
+    for tty in ["/dev/tty1", "/dev/tty0"]:
+        if os.path.exists(tty):
+            try:
+                with open(tty, "wb", buffering=0) as f:
+                    # \033[?25l : hide cursor, \033[2J\033[H : clear screen and cursor home
+                    f.write(b"\033[?25l\033[2J\033[H")
+            except Exception:
+                pass
+
+def show_cursor_and_cls():
+    for tty in ["/dev/tty1", "/dev/tty0"]:
+        if os.path.exists(tty):
+            try:
+                with open(tty, "wb", buffering=0) as f:
+                    # \033[2J\033[H\033[?25h : clear screen and restore cursor
+                    f.write(b"\033[2J\033[H\033[?25h")
+            except Exception:
+                pass
+
 def main():
     global running
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
+
+    # Blank virtual terminal cursor to keep bootsplash clean
+    hide_cursor_and_cls()
 
     # Wait up to 5s for /dev/fb0 to become available
     for _ in range(50):
@@ -74,7 +97,7 @@ def main():
 
     fb_w, fb_h, fb_bpp = fb_info
     if fb_bpp not in (24, 32):
-        fb_bpp = 32  # standard default for DRM FB
+        fb_bpp = 32
 
     bmp_data = load_bmp(BOOT_BMP)
     if not bmp_data:
@@ -107,7 +130,6 @@ def main():
         fb_fd.seek(dest_offset)
         row_src = bmp_rows[y]
         if fb_bpp == 32 and bmp_bpp == 24:
-            # Expand 24-bit BGR to 32-bit BGRA
             row_32 = bytearray(bmp_w * 4)
             for x in range(min(bmp_w, fb_w - start_x)):
                 b = row_src[x*3]
@@ -166,14 +188,15 @@ def main():
         frame = (frame + 1) % dot_count
         time.sleep(0.08)
 
-    # Blank screen on exit so login prompt appears clean
+    # Clean screen and restore cursor on exit for login prompt
     try:
         fb_fd.seek(0)
         fb_fd.write(b"\x00" * (fb_h * fb_stride))
     except Exception:
         pass
-
     fb_fd.close()
+
+    show_cursor_and_cls()
 
 if __name__ == "__main__":
     main()
