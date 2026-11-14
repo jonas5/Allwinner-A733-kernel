@@ -37,9 +37,9 @@ if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 # serial:  UART ttyS0 + HDMI tty2 for console/systemd (keeps tty1 reserved for clean bootsplash)
 # display: HDMI tty2 only
 # both:    UART ttyS0 + HDMI tty2 (verbose debug mode)
-if test "${console}" = "display"; then setenv consoleargs "console=tty2"; fi
-if test "${console}" = "serial"; then setenv consoleargs "console=ttyS0,115200 console=tty2"; fi
-if test "${console}" = "both"; then setenv consoleargs "console=ttyS0,115200 console=tty2"; fi
+if test "${console}" = "display"; then setenv consoleargs "console=tty1"; fi
+if test "${console}" = "serial"; then setenv consoleargs "console=tty1 console=ttyS0,115200"; fi
+if test "${console}" = "both"; then setenv consoleargs "console=tty1 console=ttyS0,115200"; fi
 
 if test "${earlycon}" = "on"; then setenv consoleargs "earlyprintk=sunxi-uart,0x02500000 ${consoleargs}"; fi
 
@@ -54,7 +54,7 @@ part uuid ${devtype} ${devnum}:1 partuuid
 if test -z "${rootdev}"; then rootdev=PARTUUID="${partuuid}"; fi
 if test -z "${rootdev}"; then rootdev=/dev/mmcblk0p1; fi
 
-setenv bootargs "root=${rootdev} fbcon=map:1 rootwait rootdelay=1 rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} clk_ignore_unused swiotlb=65536 usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
+setenv bootargs "root=${rootdev} rootwait rootdelay=1 rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} clk_ignore_unused swiotlb=65536 usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
 
 if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"; fi
 
