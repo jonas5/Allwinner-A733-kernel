@@ -46,7 +46,7 @@ if test "${earlycon}" = "on"; then setenv consoleargs "earlyprintk=sunxi-uart,0x
 if test "${bootlogo}" = "true"; then
 	setenv consoleargs "systemd.show_status=1 rd.udev.log_level=3 ${consoleargs}"
 else
-	setenv consoleargs "systemd.show_status=1 ${consoleargs}"
+	setenv consoleargs "systemd.show_status=1 rd.udev.log_level=3 ${consoleargs}"
 fi
 
 part uuid ${devtype} ${devnum}:1 partuuid
