@@ -140,3 +140,10 @@ A hardware-agnostic spinning wheel animation has been integrated into the boot s
   1. Detects framebuffer `/dev/fb0` geometry and dynamically parses `/boot/boot.bmp` (works with Orange Pi, Radxa, or custom 24bpp/32bpp BMPs).
   2. Centers the logo on the display and renders a smooth 12-dot spinning wheel indicator directly below it.
   3. Ordered `Before=getty.target systemd-user-sessions.service`, smoothly terminating and clearing the display the moment the login prompt is ready.
+
+## Boot Logging Mode (Silent Splash vs Verbose Debug)
+
+To switch between a clean animated bootsplash and verbose debug logging:
+
+A helper script is installed on the SD card at  (or ):
+
