@@ -128,3 +128,15 @@ If repairing manually without the script:
    sync
    umount /mnt/sdcard
    ```
+
+---
+
+## 4. Framebuffer Bootsplash with Animated Spinner
+
+A hardware-agnostic spinning wheel animation has been integrated into the boot sequence:
+- **Location**: `/usr/local/bin/a733-bootsplash-spinner`
+- **Systemd Unit**: `/etc/systemd/system/a733-bootsplash-spinner.service` (enabled in `sysinit.target`)
+- **Behavior**:
+  1. Detects framebuffer `/dev/fb0` geometry and dynamically parses `/boot/boot.bmp` (works with Orange Pi, Radxa, or custom 24bpp/32bpp BMPs).
+  2. Centers the logo on the display and renders a smooth 12-dot spinning wheel indicator directly below it.
+  3. Ordered `Before=getty.target systemd-user-sessions.service`, smoothly terminating and clearing the display the moment the login prompt is ready.
