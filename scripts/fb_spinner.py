@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """
-Static Framebuffer Bootsplash for Allwinner A733
-Paints /boot/boot.bmp (or /boot/logo.bmp) to /dev/fb0 upon kernel DRM init
-Holds the display clean and silent until getty login takes over.
+Hardware Framebuffer Bootsplash Spinner for Allwinner A733
+- Renders /boot/boot.bmp (or /boot/logo.bmp) centered on /dev/fb0
+- Animates a smooth rotating waiting wheel below the logo
+- Listens to /dev/input/event* for ESC / Enter / Space to exit immediately
+- Exits cleanly when systemd finishes booting and getty takes over
 """
 
-import os, sys, time, struct, fcntl, ctypes, signal
+import os, sys, time, math, glob, select, signal, struct, fcntl, ctypes
 
 BOOT_BMP = '/boot/boot.bmp'
 LOGO_BMP = '/boot/logo.bmp'
@@ -83,11 +85,41 @@ def sig_handler(signum, frame):
     global running
     running = False
 
+def hide_cursor_and_cls():
+    for tty in ['/dev/tty1', '/dev/tty0']:
+        if os.path.exists(tty):
+            try:
+                with open(tty, 'wb', buffering=0) as f:
+                    f.write(b'\033[?25l\033[2J\033[H')
+            except Exception:
+                pass
+
+def show_cursor_and_cls():
+    for tty in ['/dev/tty1', '/dev/tty0']:
+        if os.path.exists(tty):
+            try:
+                with open(tty, 'wb', buffering=0) as f:
+                    f.write(b'\033[2J\033[H\033[?25h')
+            except Exception:
+                pass
+
+def open_keyboard_devices():
+    fds = []
+    for ev in glob.glob('/dev/input/event*'):
+        try:
+            fd = os.open(ev, os.O_RDONLY | os.O_NONBLOCK)
+            fds.append(fd)
+        except Exception:
+            pass
+    return fds
+
 def main():
     signal.signal(signal.SIGTERM, sig_handler)
     signal.signal(signal.SIGINT, sig_handler)
 
-    # Wait for /dev/fb0
+    hide_cursor_and_cls()
+
+    # Wait for /dev/fb0 to become available
     fb_info = None
     for _ in range(60):
         if os.path.exists(FB_DEVICE):
@@ -110,14 +142,14 @@ def main():
 
     start_x = max(0, (fb_w - bmp_w) // 2)
     start_x = (start_x // 16) * 16
-    start_y = max(0, (fb_h - bmp_h) // 2)
+    start_y = max(0, (fb_h - bmp_h) // 2 - 45)
 
     try:
         fb_fd = open(FB_DEVICE, 'r+b', buffering=0)
     except Exception:
         sys.exit(0)
 
-    # Paint solid black canvas
+    # Clear screen to black
     try:
         fb_fd.seek(0)
         fb_fd.write(bytes([0]) * (fb_h * fb_stride))
@@ -144,14 +176,84 @@ def main():
         elif fb_bpp == bmp_bpp:
             fb_fd.write(row_src[:(fb_w - start_x) * bytes_per_pixel])
 
-    # Hold logo display silently until systemd terminates this service for getty login
-    while running:
-        time.sleep(0.1)
+    # Spinner geometry (placed below the logo)
+    spin_cx = fb_w // 2
+    spin_cy = start_y + bmp_h + 45
+    radius = 24
+    dot_count = 12
+    dot_r = 4
+
+    input_fds = open_keyboard_devices()
+    frame = 0
 
     try:
-        fb_fd.close()
-    except Exception:
-        pass
+        while running:
+            # Check keyboard breaks (ESC / Enter / Space)
+            if input_fds:
+                rlist, _, _ = select.select(input_fds, [], [], 0.0)
+                if rlist:
+                    for rfd in rlist:
+                        try:
+                            ev = os.read(rfd, 24)
+                            if len(ev) >= 24:
+                                tv_sec, tv_usec, ev_type, ev_code, ev_val = struct.unpack('qqHHi', ev[:24])
+                                if ev_val > 0 and ev_code in (1, 28, 57):
+                                    running = False
+                                    break
+                        except Exception:
+                            pass
+                    if not running:
+                        break
+
+            # Draw spinner frame
+            for i in range(dot_count):
+                angle = (2 * math.pi / dot_count) * i - (frame * 0.28)
+                cx = int(spin_cx + radius * math.cos(angle))
+                cy = int(spin_cy + radius * math.sin(angle))
+                alpha = (i + 1) / float(dot_count)
+                intensity = int(50 + 205 * alpha)
+                color = bytes([intensity, intensity, intensity, 0xff]) if fb_bpp == 32 else bytes([intensity, intensity, intensity])
+
+                for dy in range(-dot_r, dot_r + 1):
+                    py = cy + dy
+                    if py < 0 or py >= fb_h:
+                        continue
+                    dx_limit = int(math.sqrt(max(0, dot_r * dot_r - dy * dy)))
+                    left_x = max(0, cx - dx_limit)
+                    right_x = min(fb_w - 1, cx + dx_limit)
+                    span_len = right_x - left_x + 1
+                    if span_len > 0:
+                        fb_fd.seek(py * fb_stride + left_x * bytes_per_pixel)
+                        fb_fd.write(color * span_len)
+
+            time.sleep(0.04)
+            frame = (frame + 1) % dot_count
+
+            # Clear spinner track
+            clear_box = (dot_r + radius + 8)
+            box_start_y = max(0, spin_cy - clear_box)
+            box_end_y = min(fb_h, spin_cy + clear_box)
+            box_start_x = max(0, spin_cx - clear_box)
+            box_end_x = min(fb_w, spin_cx + clear_box)
+            span = (box_end_x - box_start_x) * bytes_per_pixel
+            clear_bytes = bytes([0]) * span
+            for py in range(box_start_y, box_end_y):
+                fb_fd.seek(py * fb_stride + box_start_x * bytes_per_pixel)
+                fb_fd.write(clear_bytes)
+
+    finally:
+        for fd in input_fds:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+        try:
+            fb_fd.seek(0)
+            fb_fd.write(bytes([0]) * (fb_h * fb_stride))
+            fb_fd.close()
+        except Exception:
+            pass
+        show_cursor_and_cls()
 
 if __name__ == '__main__':
     main()
