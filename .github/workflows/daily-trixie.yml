@@ -217,6 +217,13 @@ jobs:
             sudo mkdir -p /tmp/img_root/etc/systemd/system/getty.target.wants
             sudo ln -sf /lib/systemd/system/serial-getty@.service /tmp/img_root/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
             sudo ln -sf /lib/systemd/system/getty@.service /tmp/img_root/etc/systemd/system/getty.target.wants/getty@tty1.service
+            # Install bootsplash spinner daemon and service
+            sudo mkdir -p /tmp/img_root/usr/local/bin
+            sudo cp -vf overlay/usr/local/bin/a733-bootsplash-spinner /tmp/img_root/usr/local/bin/a733-bootsplash-spinner 2>/dev/null || true
+            sudo chmod +x /tmp/img_root/usr/local/bin/a733-bootsplash-spinner 2>/dev/null || true
+            sudo mkdir -p /tmp/img_root/etc/systemd/system/sysinit.target.wants
+            sudo cp -vf overlay/etc/systemd/system/a733-bootsplash-spinner.service /tmp/img_root/etc/systemd/system/a733-bootsplash-spinner.service 2>/dev/null || true
+            sudo ln -sf /etc/systemd/system/a733-bootsplash-spinner.service /tmp/img_root/etc/systemd/system/sysinit.target.wants/a733-bootsplash-spinner.service 2>/dev/null || true
             # Enable SSH service and socket explicitly
             sudo mkdir -p /tmp/img_root/etc/systemd/system/multi-user.target.wants
             sudo mkdir -p /tmp/img_root/etc/systemd/system/sockets.target.wants
