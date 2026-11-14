@@ -217,6 +217,23 @@ jobs:
             sudo mkdir -p /tmp/img_root/etc/systemd/system/getty.target.wants
             sudo ln -sf /lib/systemd/system/serial-getty@.service /tmp/img_root/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service
             sudo ln -sf /lib/systemd/system/getty@.service /tmp/img_root/etc/systemd/system/getty.target.wants/getty@tty1.service
+            # Enable SSH service and socket explicitly
+            sudo mkdir -p /tmp/img_root/etc/systemd/system/multi-user.target.wants
+            sudo mkdir -p /tmp/img_root/etc/systemd/system/sockets.target.wants
+            if [ -f /tmp/img_root/usr/lib/systemd/system/ssh.service ]; then
+              sudo ln -sf /usr/lib/systemd/system/ssh.service /tmp/img_root/etc/systemd/system/multi-user.target.wants/ssh.service
+            elif [ -f /tmp/img_root/lib/systemd/system/ssh.service ]; then
+              sudo ln -sf /lib/systemd/system/ssh.service /tmp/img_root/etc/systemd/system/multi-user.target.wants/ssh.service
+            fi
+            if [ -f /tmp/img_root/usr/lib/systemd/system/ssh.socket ]; then
+              sudo ln -sf /usr/lib/systemd/system/ssh.socket /tmp/img_root/etc/systemd/system/sockets.target.wants/ssh.socket
+            elif [ -f /tmp/img_root/lib/systemd/system/ssh.socket ]; then
+              sudo ln -sf /lib/systemd/system/ssh.socket /tmp/img_root/etc/systemd/system/sockets.target.wants/ssh.socket
+            fi
+
+            # Install drivers and ensure /etc/modules-load.d/a733-drivers.conf exists
+            sudo mkdir -p /tmp/img_root/etc/modules-load.d
+            printf 'maxio\nmotorcomm\naic8800_bsp\naic8800_fdrv\ncan\ncan_raw\ngs_usb\n' | sudo tee /tmp/img_root/etc/modules-load.d/a733-drivers.conf
             sync
             sudo umount /tmp/img_root
             sudo losetup -d "$LOOPDEV"
