@@ -40,12 +40,11 @@ if [ -b "" ]; then
       exit 1
     fi
   fi
+  if grep -qs "^ " /proc/mounts; then
+    umount -l "" || true
   fi
-  if grep -qs "^$PART " /proc/mounts; then
-    umount -l "$PART" || true
-  fi
-  MNT="/mnt/a733_fix_$$"
-  mkdir -p "$MNT"
+  MNT="/mnt/a733_fix_1123988"
+  mkdir -p 
   CLEANUP_MOUNT=1
   echo "[*] Mounting $PART -> $MNT..."
   mount "$PART" "$MNT"
