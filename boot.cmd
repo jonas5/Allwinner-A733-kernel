@@ -38,8 +38,8 @@ if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
 # display: HDMI tty2 only
 # both:    UART ttyS0 + HDMI tty2 (verbose debug mode)
 if test "${console}" = "display"; then setenv consoleargs "console=tty0"; fi
-if test "${console}" = "serial"; then setenv consoleargs "console=tty0 console=ttyS0,115200"; fi
-if test "${console}" = "both"; then setenv consoleargs "console=tty0 console=ttyS0,115200"; fi
+if test "${console}" = "serial"; then setenv consoleargs "console=ttyS0,115200 console=tty0"; fi
+if test "${console}" = "both"; then setenv consoleargs "console=ttyS0,115200 console=tty0"; fi
 
 if test "${earlycon}" = "on"; then setenv consoleargs "earlyprintk=sunxi-uart,0x02500000 ${consoleargs}"; fi
 
