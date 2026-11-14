@@ -1,0 +1,179 @@
+#!/usr/bin/env python3
+"""
+Allwinner A733 Framebuffer Boot Splash Spinner Daemon
+Reads whatever /boot/boot.bmp is installed (Orange Pi, Radxa, or custom),
+centers it on /dev/fb0, and renders an animated spinning wheel underneath
+until the system reaches getty.target (login prompt).
+"""
+import sys
+import os
+import time
+import math
+import struct
+import signal
+
+FB_DEV = "/dev/fb0"
+BOOT_BMP = "/boot/boot.bmp"
+FBIOGET_VSCREENINFO = 0x4600
+
+def get_fb_info():
+    if not os.path.exists(FB_DEV):
+        return None
+    try:
+        import fcntl
+        with open(FB_DEV, "rb") as f:
+            buf = bytearray(160)
+            fcntl.ioctl(f.fileno(), FBIOGET_VSCREENINFO, buf)
+            xres, yres, vxres, vyres, xoff, yoff, bpp = struct.unpack("<7I", buf[:28])
+            return xres, yres, bpp
+    except Exception:
+        return None
+
+def load_bmp(bmp_path):
+    if not os.path.isfile(bmp_path):
+        return None
+    with open(bmp_path, "rb") as f:
+        data = f.read()
+    if len(data) < 54 or data[:2] != b"BM":
+        return None
+    offset = struct.unpack("<I", data[10:14])[0]
+    w, h, planes, bpp = struct.unpack("<iiHH", data[18:30])
+    if bpp != 24 and bpp != 32:
+        return None
+    h_abs = abs(h)
+    row_stride = (w * (bpp // 8) + 3) & (~3)
+    pixels = []
+    # BMP stored bottom-to-top if h > 0
+    raw_pixels = data[offset:]
+    for y in range(h_abs):
+        actual_y = (h_abs - 1 - y) if h > 0 else y
+        row_start = actual_y * row_stride
+        row = raw_pixels[row_start : row_start + w * (bpp // 8)]
+        pixels.append(row)
+    return w, h_abs, bpp, pixels
+
+running = True
+def sig_handler(signum, frame):
+    global running
+    running = False
+
+def main():
+    global running
+    signal.signal(signal.SIGTERM, sig_handler)
+    signal.signal(signal.SIGINT, sig_handler)
+
+    # Wait up to 5s for /dev/fb0 to become available
+    for _ in range(50):
+        if os.path.exists(FB_DEV):
+            break
+        time.sleep(0.1)
+
+    fb_info = get_fb_info()
+    if not fb_info:
+        sys.exit(0)
+
+    fb_w, fb_h, fb_bpp = fb_info
+    if fb_bpp not in (24, 32):
+        fb_bpp = 32  # standard default for DRM FB
+
+    bmp_data = load_bmp(BOOT_BMP)
+    if not bmp_data:
+        sys.exit(0)
+
+    bmp_w, bmp_h, bmp_bpp, bmp_rows = bmp_data
+
+    # Center coordinates on framebuffer
+    start_x = max(0, (fb_w - bmp_w) // 2)
+    start_y = max(0, (fb_h - bmp_h) // 2 - 40)
+
+    bytes_per_pixel = fb_bpp // 8
+    fb_stride = fb_w * bytes_per_pixel
+
+    try:
+        fb_fd = open(FB_DEV, "r+b", buffering=0)
+    except Exception:
+        sys.exit(0)
+
+    # Clear screen to black
+    try:
+        fb_fd.seek(0)
+        fb_fd.write(b"\x00" * (fb_h * fb_stride))
+    except Exception:
+        pass
+
+    # Draw static logo once
+    for y in range(min(bmp_h, fb_h - start_y)):
+        dest_offset = (start_y + y) * fb_stride + start_x * bytes_per_pixel
+        fb_fd.seek(dest_offset)
+        row_src = bmp_rows[y]
+        if fb_bpp == 32 and bmp_bpp == 24:
+            # Expand 24-bit BGR to 32-bit BGRA
+            row_32 = bytearray(bmp_w * 4)
+            for x in range(min(bmp_w, fb_w - start_x)):
+                b = row_src[x*3]
+                g = row_src[x*3 + 1]
+                r = row_src[x*3 + 2]
+                row_32[x*4] = b
+                row_32[x*4 + 1] = g
+                row_32[x*4 + 2] = r
+                row_32[x*4 + 3] = 0xff
+            fb_fd.write(row_32)
+        elif fb_bpp == bmp_bpp:
+            fb_fd.write(row_src[:(fb_w - start_x) * bytes_per_pixel])
+
+    # Spinner animation parameters
+    spin_cx = fb_w // 2
+    spin_cy = start_y + bmp_h + 50
+    radius = 20
+    dot_count = 12
+    dot_r = 3
+
+    frame = 0
+    # Animation loop
+    while running:
+        angle_base = frame * (2 * math.pi / dot_count)
+
+        # Clear spinner area to black
+        box_top = max(0, spin_cy - radius - dot_r - 2)
+        box_bottom = min(fb_h, spin_cy + radius + dot_r + 2)
+        box_left = max(0, spin_cx - radius - dot_r - 2)
+        box_w = min(fb_w - box_left, (radius + dot_r + 2) * 2)
+
+        for sy in range(box_top, box_bottom):
+            fb_fd.seek(sy * fb_stride + box_left * bytes_per_pixel)
+            fb_fd.write(b"\x00" * (box_w * bytes_per_pixel))
+
+        # Render dots
+        for i in range(dot_count):
+            dot_angle = angle_base + (i * 2 * math.pi / dot_count)
+            alpha = (i + 1) / dot_count
+            dx = int(spin_cx + radius * math.cos(dot_angle))
+            dy = int(spin_cy + radius * math.sin(dot_angle))
+            c = int(255 * alpha)
+
+            pixel_val = bytes([c, c, c, 255]) if fb_bpp == 32 else bytes([c, c, c])
+
+            for py in range(dy - dot_r, dy + dot_r + 1):
+                if py < 0 or py >= fb_h:
+                    continue
+                for px in range(dx - dot_r, dx + dot_r + 1):
+                    if px < 0 or px >= fb_w:
+                        continue
+                    if (px - dx)**2 + (py - dy)**2 <= dot_r**2:
+                        fb_fd.seek(py * fb_stride + px * bytes_per_pixel)
+                        fb_fd.write(pixel_val)
+
+        frame = (frame + 1) % dot_count
+        time.sleep(0.08)
+
+    # Blank screen on exit so login prompt appears clean
+    try:
+        fb_fd.seek(0)
+        fb_fd.write(b"\x00" * (fb_h * fb_stride))
+    except Exception:
+        pass
+
+    fb_fd.close()
+
+if __name__ == "__main__":
+    main()

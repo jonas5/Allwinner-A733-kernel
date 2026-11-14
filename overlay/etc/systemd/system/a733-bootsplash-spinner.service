@@ -1,0 +1,16 @@
+[Unit]
+Description=A733 Framebuffer Boot Splash Spinner
+DefaultDependencies=no
+After=systemd-udev-settle.service local-fs.target
+Before=getty.target systemd-user-sessions.service plymouth-quit.service
+Conflicts=shutdown.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/a733-bootsplash-spinner
+StandardOutput=null
+StandardError=null
+Restart=no
+
+[Install]
+WantedBy=sysinit.target
