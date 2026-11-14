@@ -151,6 +151,9 @@ def main():
 
     bmp_data = load_bmp(BOOT_BMP)
     if not bmp_data:
+        bmp_data = load_bmp("/boot/logo.bmp")
+
+    if not bmp_data:
         sys.exit(0)
 
     bmp_w, bmp_h, bmp_bpp, palette, bmp_rows = bmp_data
@@ -218,7 +221,7 @@ def main():
                         try:
                             ev = os.read(rfd, 24)
                             if len(ev) >= 24:
-                                ev_type, ev_code, ev_val = struct.unpack('48xHHII', ev)[-4:]
+                                tv_sec, tv_usec, ev_type, ev_code, ev_val = struct.unpack('qqHHi', ev[:24])
                                 if ev_val > 0 and ev_code in (1, 28, 57):
                                     running = False
                                     break
