@@ -3029,16 +3029,16 @@
 };
 
 &gmac0_phy0 {
-	//compatible = "ethernet-phy-id001c.c916";
-	/* The YT8531's EEE/LPI does not work reliably on this board: with EEE
-	 * negotiated the link reports 1Gbps/Full but drops almost every packet
-	 * (and the LPI wake-up corrupts frames).  Never advertise EEE.
-	 */
+	compatible = "ethernet-phy-id001c.c916";
+	reg = <0x1>;
+	max-speed = <1000>;
+	reset-gpios = <&pio PH 16 GPIO_ACTIVE_LOW>;
+	reset-assert-us = <10000>;
+	reset-deassert-us = <150000>;
+	realtek,led1-link-led2-activity;
+	/* Disable EEE / LPI on RTL8211F GbE PHY to prevent packet loss / DHCP timeout */
 	eee-broken-100tx;
 	eee-broken-1000t;
-	reset-gpios;// = <&pio PH 16 GPIO_ACTIVE_LOW>;
-	//reset-assert-us = <100000>;
-	//reset-deassert-us = <3500000>;
 };
 
 &gmac0 {
@@ -3046,11 +3046,13 @@
 	pinctrl-0 = <&gmac0_pins_default>;
 	pinctrl-1 = <&gmac0_pins_sleep>;
 	pinctrl-names = "default", "sleep";
-	aw,soc-phy-clk-en;
-	tx-delay = <7>;
-	rx-delay = <18>;
-	dwmac3v3-supply = <&reg_dc1sw2>;
-	phy3v3-supply = <&reg_dc1sw1>;
+	aw,rgmii-clk-ext;
+	snps,fixed-burst;
+	snps,en-tx-lpi-clockgating;
+	tx-delay = <12>;
+	rx-delay = <21>;
+	dwmac3v3-supply = <&reg_cldo2>;
+	phy3v3-supply = <&reg_bldo1>;
 	status = "okay";
 };
 
