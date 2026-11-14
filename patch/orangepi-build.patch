@@ -43,7 +43,7 @@ index 3674a3b..4759345 100755
  DISTRIB_TYPE_LEGACY="bookworm jammy bullseye"
 +DISTRIB_TYPE_NEXT="bookworm trixie resolute"
  SKIP_BOOTSPLASH="yes" # Skip boot splash patch, conflicts with CONFIG_VT=yes
- REVISION="1.1.0"
+ REVISION="1.2.0"
 diff --git a/external/config/sources/families/sun60iw2.conf b/external/config/sources/families/sun60iw2.conf
 index 8a88ba9..b1d4262 100644
 --- a/external/config/sources/families/sun60iw2.conf
