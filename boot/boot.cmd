@@ -8,7 +8,7 @@ setenv overlay_error "false"
 # default values
 setenv verbosity "7"
 setenv console "both"
-setenv bootlogo "false"
+setenv bootlogo "true"
 setenv rootfstype "ext4"
 setenv docker_optimizations "on"
 setenv earlycon "on"
