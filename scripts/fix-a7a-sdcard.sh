@@ -429,7 +429,6 @@ echo "    - Dual console autologin ready ($LOGIN_USER)"
 echo "======================================================================="
 exit 0
 __PAYLOAD_START__
-__PAYLOAD_START__
 H4sIAAAAAAAAA+xceXfbRpL3v8Sn6ECeLGnzJnXYiSZDHY40kSiOSDnjp9HDA4EmiRjXoAEes9n9
 Bvut9oNtVTeOBgiJUtbJvN0Jn00SjeruX1XX1YWm9MNerzH1vJD5ts4WDeZbrkuDV1/y1YbX4f4+
 /4RX4bPb7nYOXnX2u4cH7f1er9N51e70253eK9L+oigeeUUs1ANCXgUgg6fodt3/P/ra+6oVsaA1
