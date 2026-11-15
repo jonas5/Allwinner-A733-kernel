@@ -339,6 +339,7 @@ jobs:
           echo "=== Post-processing generated SD images ==="
           find orangepi-build/output/ -type f -name "*.img" | while read -r img; do
             echo "Patching image: $img"
+            if [ -f "firmware/bootloader-orangepi-4-pro.bin.gz" ]; then gzip -d -k -f "firmware/bootloader-orangepi-4-pro.bin.gz" && mv -f "firmware/bootloader-orangepi-4-pro.bin" boot/bootloader-orangepi-4-pro.bin; fi
             if [ -f "boot/bootloader-orangepi-4-pro.bin" ]; then
               echo "Writing bootloader to $img at sector 16..."
               dd if=boot/bootloader-orangepi-4-pro.bin of="$img" bs=512 seek=16 conv=notrunc
