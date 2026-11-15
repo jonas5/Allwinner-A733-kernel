@@ -366,20 +366,70 @@ cat << SSH_OVERRIDE_EOF > "$MNT/etc/systemd/system/ssh.service.d/override.conf"
 ExecStartPre=-/usr/bin/ssh-keygen -A
 SSH_OVERRIDE_EOF
 
-echo "[*] Updating systemd service names (orangepi-* -> a733-allwinner-*)..."
+echo "[*] Thoroughly updating systemd services, targets, wants, and scripts (orangepi-* -> a733-allwinner-*)..."
+# 1. Update service definitions in /usr/lib/systemd/system (and /lib/systemd/system)
 SYS_UNITS="$MNT/usr/lib/systemd/system"
 [ -d "$SYS_UNITS" ] || SYS_UNITS="$MNT/lib/systemd/system"
 if [ -d "$SYS_UNITS" ]; then
   for u in "$SYS_UNITS"/orangepi-*.service; do
-    if [ -f "$u" ] && [ ! -L "$u" ]; then
+    if [ -f "$u" ] || [ -L "$u" ]; then
       u_base="$(basename "$u")"
       new_base="${u_base/orangepi-/a733-allwinner-}"
-      cp -f "$u" "$SYS_UNITS/$new_base"
-      rm -f "$u"
-      ln -sf "$new_base" "$u"
+      if [ -f "$u" ] && [ ! -L "$u" ]; then
+        mv -f "$u" "$SYS_UNITS/$new_base"
+      elif [ -L "$u" ]; then
+        rm -f "$u"
+      fi
+      ln -sf "$new_base" "$SYS_UNITS/$u_base"
+    fi
+  done
+
+  # Also update internal references inside all a733-allwinner-*.service files
+  for s in "$SYS_UNITS"/a733-allwinner-*.service; do
+    if [ -f "$s" ]; then
+      sed -i 's/orangepi-/a733-allwinner-/g' "$s" 2>/dev/null || true
+      sed -i 's/Orange Pi/A733 Allwinner/g' "$s" 2>/dev/null || true
     fi
   done
 fi
+
+# 2. Update all /etc/systemd/system/*.wants symlinks
+for wants_dir in "$MNT"/etc/systemd/system/*.wants; do
+  if [ -d "$wants_dir" ]; then
+    for link in "$wants_dir"/orangepi-*.service; do
+      if [ -e "$link" ] || [ -L "$link" ]; then
+        l_base="$(basename "$link")"
+        new_lbase="${l_base/orangepi-/a733-allwinner-}"
+        rm -f "$link"
+        ln -sf "/usr/lib/systemd/system/$new_lbase" "$wants_dir/$new_lbase"
+        ln -sf "$new_lbase" "$wants_dir/$l_base"
+      fi
+    done
+  fi
+done
+
+# 3. Rename helper directories/scripts in /usr/lib and /etc/default for complete consistency
+if [ -d "$MNT/usr/lib/orangepi" ] && [ ! -d "$MNT/usr/lib/a733-allwinner" ]; then
+  cp -a "$MNT/usr/lib/orangepi" "$MNT/usr/lib/a733-allwinner"
+  ln -sf a733-allwinner "$MNT/usr/lib/orangepi" 2>/dev/null || true
+fi
+for def in "$MNT"/etc/default/orangepi-*; do
+  if [ -f "$def" ]; then
+    d_base="$(basename "$def")"
+    new_dbase="${d_base/orangepi-/a733-allwinner-}"
+    cp -a "$def" "$MNT/etc/default/$new_dbase"
+    ln -sf "$new_dbase" "$def" 2>/dev/null || true
+  fi
+done
+
+# 4. Rename /etc/update-motd.d/ scripts
+for motd in "$MNT"/etc/update-motd.d/*orangepi*; do
+  if [ -f "$motd" ]; then
+    m_base="$(basename "$motd")"
+    new_mbase="${m_base/orangepi/a733-allwinner}"
+    mv -f "$motd" "$MNT/etc/update-motd.d/$new_mbase"
+  fi
+done
 
 echo "[+] Applying board branding (Banana Pi OS / Radxa OS / Orange Pi, MOTD, ASCII art)..."
 if [ "$BOARD" = "bananapi-m8" ]; then
