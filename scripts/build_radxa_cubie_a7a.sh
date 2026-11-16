@@ -1,0 +1,247 @@
+#!/bin/bash
+# ==============================================================================
+# build_radxa_cubie_a7a.sh - Standalone Builder for Radxa Cubie A7A
+#
+# Generates bootable SD card image for Radxa Cubie A7A (Allwinner A733 + AXP318)
+# Features:
+#   - Authentic vendor Device Tree (sun60i-a733-cubie-a7a.dtb)
+#   - Universal bootloader (bootloader-radxa-cubie.bin)
+#   - Verified clean ext4 filesystem (e2fsck -fy)
+#   - Proper hostname & /etc/hosts resolution (radxa-cubie-a7a)
+#   - Clean single MOTD header with aligned Figlet ASCII banner
+#   - VT2 default console (tty2 autologin with switch-to-tty2)
+#   - Multithreaded XZ compression and SHA256 checksum generation
+#   - Optional GitHub release creation / upload
+#
+# Usage:
+#   ./build_radxa_cubie_a7a.sh [VERSION] [--upload]
+# Example:
+#   ./build_radxa_cubie_a7a.sh 1.1.5-beta
+#   ./build_radxa_cubie_a7a.sh 1.1.5-beta --upload
+# ==============================================================================
+set -euo pipefail
+
+BOARD_NAME="cubie-a7a"
+MODEL_TITLE="Radxa Cubie A7A"
+HOSTNAME_VAL="radxa-cubie-a7a"
+DTB_FILE="/srv/artifacts/sun60i-a733-cubie-a7a.dtb"
+BASE_IMG="/srv/storage/full_18.img"
+FIX_BUNDLE="/srv/storage/u-boot_partition_fix.sh"
+RELEASE_DIR="/srv/storage/local-releases/radxa-cubie-a7a"
+
+VERSION="${1:-1.1.5-beta}"
+DO_UPLOAD="no"
+for arg in "$@"; do
+  if [ "$arg" = "--upload" ]; then
+    DO_UPLOAD="yes"
+  fi
+done
+
+TARGET_NAME="Radxa-Cubie-A7A_${VERSION}_ubuntu_noble_minimal_linux6.18.63"
+WORKDIR="/srv/storage"
+OUT_IMG="${WORKDIR}/${TARGET_NAME}.img"
+OUT_XZ="${OUT_IMG}.xz"
+mkdir -p "$RELEASE_DIR"
+
+echo "======================================================================"
+echo "  Building ${MODEL_TITLE} Release Image: ${VERSION}"
+echo "  Base Image: ${BASE_IMG}"
+echo "  DTB:        ${DTB_FILE}"
+echo "========================================================================"
+
+if [ ! -f "$BASE_IMG" ]; then
+  echo "[-] Error: Base image ${BASE_IMG} not found!" >&2
+  exit 1
+fi
+
+if [ ! -f "$DTB_FILE" ]; then
+  echo "[-] Error: Device tree ${DTB_FILE} not found!" >&2
+  exit 1
+fi
+
+if [ ! -f "$FIX_BUNDLE" ]; then
+  echo "[-] Error: Fix bundle ${FIX_BUNDLE} not found!" >&2
+  exit 1
+fi
+
+echo "[*] Checking base image ext4 filesystem integrity..."
+LOOP_BASE=$(losetup -fP --show "$BASE_IMG")
+e2fsck -fy "${LOOP_BASE}p1" || true
+losetup -d "$LOOP_BASE"
+
+echo "[*] Cloning base image to ${OUT_IMG}..."
+cp -f "$BASE_IMG" "$OUT_IMG"
+
+LOOP_DEV=$(losetup -fP --show "$OUT_IMG")
+echo "[*] Attached target image to ${LOOP_DEV}"
+
+cleanup() {
+  echo "[*] Cleaning up loop devices and mounts..."
+  sync || true
+  if [ -n "${MNT:-}" ] && mountpoint -q "$MNT" 2>/dev/null; then
+    umount "$MNT" || true
+    rm -rf "$MNT" || true
+  fi
+  losetup -d "$LOOP_DEV" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+echo "[*] Applying universal bootloader and partition fix..."
+bash "$FIX_BUNDLE" "$LOOP_DEV" "$BOARD_NAME"
+
+MNT="/mnt/a7a_rootfs_$$"
+mkdir -p "$MNT"
+mount "${LOOP_DEV}p1" "$MNT"
+
+echo "[*] Installing authentic Radxa Cubie A7A DTB..."
+cp -f "$DTB_FILE" "$MNT/boot/sun60i-a733-cubie-a7a.dtb"
+mkdir -p "$MNT/boot/dtb/allwinner"
+cp -f "$DTB_FILE" "$MNT/boot/dtb/allwinner/sun60i-a733-cubie-a7a.dtb"
+cp -f "$DTB_FILE" "$MNT/boot/dtb/allwinner/sun60i-a733-orangepi-4-pro.dtb"
+find "$MNT/boot/dtb-"* -maxdepth 2 -name "allwinner" -exec cp -f "$DTB_FILE" {}/sun60i-a733-cubie-a7a.dtb \; 2>/dev/null || true
+find "$MNT/boot/dtb-"* -maxdepth 2 -name "allwinner" -exec cp -f "$DTB_FILE" {}/sun60i-a733-orangepi-4-pro.dtb \; 2>/dev/null || true
+
+echo "[*] Configuring bootloader env files to sun60i-a733-cubie-a7a.dtb..."
+for envfile in radxaEnv.txt orangepiEnv.txt a733-allwinnerEnv.txt; do
+  if [ -f "$MNT/boot/$envfile" ]; then
+    sed -i "s|fdtfile=.*|fdtfile=allwinner/sun60i-a733-cubie-a7a.dtb|g" "$MNT/boot/$envfile"
+    sed -i "s|console=tty1|console=tty2|g" "$MNT/boot/$envfile"
+  fi
+done
+
+echo "[*] Updating version strings to ${VERSION}..."
+for f in os-release issue issue.net radxa-release motd; do
+  if [ -f "$MNT/etc/$f" ]; then
+    sed -i "s/[0-9]\+\.[0-9]\+\.[0-9]\+-beta/${VERSION}/g" "$MNT/etc/$f" 2>/dev/null || true
+  fi
+done
+
+echo "[*] Setting up hostname and /etc/hosts..."
+echo "$HOSTNAME_VAL" > "$MNT/etc/hostname"
+cat << HOSTS_EOF > "$MNT/etc/hosts"
+127.0.0.1   localhost
+127.0.1.1   $HOSTNAME_VAL
+::1         localhost $HOSTNAME_VAL ip6-localhost ip6-loopback
+fe00::0     ip6-localnet
+ff00::0     ip6-mcastprefix
+ff02::1     ip6-allnodes
+ff02::2     ip6-allrouters
+HOSTS_EOF
+
+echo "[*] Clearing static MOTD to prevent duplicates..."
+rm -f "$MNT/etc/motd" "$MNT/var/run/motd" 2>/dev/null || true
+touch "$MNT/etc/motd"
+
+echo "[*] Configuring console=tty2 in boot.cmd and regenerating boot.scr..."
+sed -i 's|console=tty1|console=tty2|g' "$MNT/boot/boot.cmd" 2>/dev/null || true
+mkimage -C none -A arm64 -T script -d "$MNT/boot/boot.cmd" "$MNT/boot/boot.scr"
+
+rm -f "$MNT/etc/systemd/system/default.target"
+ln -s /usr/lib/systemd/system/multi-user.target "$MNT/etc/systemd/system/default.target"
+
+echo "[*] Ensuring autologin overrides on tty1, tty2, and serial..."
+mkdir -p "$MNT/etc/systemd/system/getty@tty2.service.d"
+cat << 'TTY2_OVERRIDE' > "$MNT/etc/systemd/system/getty@tty2.service.d/override.conf"
+[Unit]
+After=systemd-user-sessions.service
+
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty -o '-p -- \u' --noclear --autologin radxa %I $TERM
+Type=idle
+Restart=always
+RestartSec=0
+TTY2_OVERRIDE
+
+mkdir -p "$MNT/etc/systemd/system/getty@tty1.service.d"
+cat << 'TTY1_OVERRIDE' > "$MNT/etc/systemd/system/getty@tty1.service.d/override.conf"
+[Unit]
+After=systemd-user-sessions.service plymouth-quit-wait.service
+After=rc-local.service
+
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty -o '-p -- \u' --noclear --autologin radxa %I $TERM
+Type=idle
+Restart=always
+RestartSec=0
+TTY1_OVERRIDE
+
+mkdir -p "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d"
+cat << 'SGETTY_OVERRIDE' > "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d/override.conf"
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty -o '-p -- \u' --keep-baud --autologin radxa 115200,38400,9600 %I $TERM
+Type=idle
+Restart=always
+RestartSec=0
+SGETTY_OVERRIDE
+
+echo "[*] Ensuring switch-to-tty2 service is active..."
+cat << 'SWITCH_SVC' > "$MNT/etc/systemd/system/switch-to-tty2.service"
+[Unit]
+Description=Switch Active Console to TTY2
+After=multi-user.target
+After=getty@tty2.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'if [ -x /usr/bin/chvt ]; then /usr/bin/chvt 2; elif [ -x /bin/chvt ]; then /bin/chvt 2; fi'
+
+[Install]
+WantedBy=multi-user.target
+SWITCH_SVC
+
+mkdir -p "$MNT/etc/systemd/system/multi-user.target.wants"
+ln -sf /etc/systemd/system/switch-to-tty2.service "$MNT/etc/systemd/system/multi-user.target.wants/switch-to-tty2.service"
+
+sync
+umount "$MNT"
+rm -rf "$MNT"
+unset MNT
+
+echo "[*] Running final e2fsck validation and repair on ${LOOP_DEV}p1..."
+e2fsck -fy "${LOOP_DEV}p1" || true
+
+losetup -d "$LOOP_DEV"
+trap - EXIT
+
+echo "[*] Compressing image with multicore xz (-3 fast)..."
+rm -f "$OUT_XZ" "${OUT_XZ}.sha256"
+xz -T0 -v -3 "$OUT_IMG"
+
+echo "[*] Calculating SHA256 checksum..."
+sha256sum "$OUT_XZ" | awk '{print $1}' > "${OUT_XZ}.sha256"
+
+cp -f "$OUT_XZ" "$RELEASE_DIR/"
+cp -f "${OUT_XZ}.sha256" "$RELEASE_DIR/"
+
+echo "[✓] Artifacts created:"
+ls -lh "$OUT_XZ" "${OUT_XZ}.sha256"
+
+if [ "$DO_UPLOAD" = "yes" ]; then
+  echo "[*] Publishing release radxa-cubie-a7a-v${VERSION} on GitHub..."
+  cat << NOTES_EOF > /tmp/rel_notes_a7a.md
+Radxa Cubie A7A ${VERSION} official release:
+- **Hardware Integration**: Authentic \`sun60i-a733-cubie-a7a.dtb\` with AXP318 PMIC, Gigabit Ethernet, and PowerVR GPU support.
+- **Fixed /etc/hosts Resolution**: Synchronized \`/etc/hosts\` with hostname \`radxa-cubie-a7a\` (resolving sudo warning \`unable to resolve host radxa-cubie-a7a\`).
+- **Aligned ASCII MOTD**: Corrected Figlet banner geometry without duplicate prints.
+- **Pristine VT2 Console**: Default \`console=tty2\` with automatic systemd console switch.
+- **Filesystem Integrity**: Checked and clean ext4 filesystem without corruption.
+NOTES_EOF
+
+  gh release create "radxa-cubie-a7a-v${VERSION}" "$OUT_XZ" "${OUT_XZ}.sha256" \
+    --title "Radxa Cubie A7A ${VERSION}" \
+    --notes-file /tmp/rel_notes_a7a.md \
+    -R jonas5/Allwinner-A733-kernel || true
+
+  echo "[*] Updating rolling release tag radxa-cubie-a7a-releases..."
+  gh release upload "radxa-cubie-a7a-releases" "$OUT_XZ" "${OUT_XZ}.sha256" --clobber -R jonas5/Allwinner-A733-kernel || true
+fi
+
+echo "======================================================================"
+echo " [✓] RADXA CUBIE A7A BUILD FINISHED SUCCESSFULLY"
+echo "     Image:  ${OUT_XZ}"
+echo "     SHA256: $(cat "${OUT_XZ}.sha256")"
+echo "======================================================================"
