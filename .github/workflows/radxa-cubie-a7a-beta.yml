@@ -32,7 +32,7 @@ on:
       tag_name:
         description: 'Custom release tag'
         required: false
-        default: 'radxa-cubie-a7a-beta-v1.0.2'
+        default: 'radxa-cubie-a7a-v1.1.4'
       publish_release:
         description: 'Publish or update GitHub release'
         required: true
@@ -161,33 +161,39 @@ jobs:
             exit 1
           fi
 
+          TAG_INPUT="${{ github.event.inputs.tag_name || 'radxa-cubie-a7a-v1.1.4' }}"
+          VER_TAG=$(echo "$TAG_INPUT" | sed -e 's/^radxa-cubie-a7a-//' -e 's/^v//')
+          [ -z "$VER_TAG" ] && VER_TAG="1.1.4-beta"
+
           RAW_BASENAME=$(basename "$RAW_IMG")
           KVER_RAW=$(echo "$RAW_BASENAME" | grep -oP "linux\K6\.[0-9]+(\.[0-9]+)?" || echo "6.18")
-          RADXA_IMG_NAME="Radxa-Cubie-A7A_1.0.2-beta_${{ github.event.inputs.release || 'trixie' }}_${{ github.event.inputs.flavour || 'minimal' }}_linux${KVER_RAW}.img"
+          RADXA_IMG_NAME="Radxa-Cubie-A7A_${VER_TAG}_${{ github.event.inputs.release || 'trixie' }}_${{ github.event.inputs.flavour || 'minimal' }}_linux${KVER_RAW}.img"
           RADXA_IMG="orangepi-build/output/${RADXA_IMG_NAME}"
           sudo mv -v "$RAW_IMG" "$RADXA_IMG"
 
+          echo "[*] Setting up loop device with partition scan for $RADXA_IMG..."
+          LOOP_DEV=$(sudo losetup -fP --show "$RADXA_IMG")
+          echo "Attached to $LOOP_DEV"
+          LOOP_PART="${LOOP_DEV}p1"
+
+          # Pre-mount filesystem check
+          echo "[*] Verifying filesystem integrity before mount..."
+          sudo e2fsck -fy "$LOOP_PART" || true
+
           MNT="/mnt/radxa_loop"
           sudo mkdir -p "$MNT"
-          OFFSET=$((65536 * 512))
-          sudo mount -o loop,offset=$OFFSET "$RADXA_IMG" "$MNT"
+          sudo mount "$LOOP_PART" "$MNT"
 
-          # 1. Install Cubie A7A DTB (with EEE fixes)
-          mkdir -p /tmp/dtb_compile
-          CUBIE_DTB=$(find orangepi-build/ -name "sun60i-a733-cubie-a7a.dtb" 2>/dev/null | head -n 1)
-          if [ -z "$CUBIE_DTB" ] || [ ! -f "$CUBIE_DTB" ]; then
-            echo "Compiling Cubie A7A DTB from kernel source tree..."
-            KDIR=$(find orangepi-build/kernel/ -maxdepth 1 -name "linux-6.18*" -type d 2>/dev/null | head -n 1)
-            if [ -n "$KDIR" ] && [ -d "$KDIR/scripts/dtc/include-prefixes" ]; then
-              DTC_BIN="$KDIR/scripts/dtc/dtc"
-              [ ! -x "$DTC_BIN" ] && DTC_BIN="dtc"
-              gcc -E -nostdinc -I "$KDIR/scripts/dtc/include-prefixes" -undef -D__DTS__ -x assembler-with-cpp -o /tmp/dtb_compile/cubie.dts.pre dts/sun60i-a733-cubie-a7a.dts
-              $DTC_BIN -o /tmp/dtb_compile/sun60i-a733-cubie-a7a.dtb -b 0 -i"$KDIR/arch/arm64/boot/dts/allwinner/" -i"$KDIR/scripts/dtc/include-prefixes" -Wno-unique_unit_address -Wno-unit_address_vs_reg -Wno-avoid_unnecessary_addr_size -Wno-alias_paths -Wno-graph_child_address -Wno-interrupt_map -Wno-simple_bus_reg /tmp/dtb_compile/cubie.dts.pre
-              CUBIE_DTB="/tmp/dtb_compile/sun60i-a733-cubie-a7a.dtb"
-            fi
+          # 1. Install Authentic Cubie A7A DTB (matching hardware schematics & verified vendor tree)
+          echo "=== Installing Authentic Radxa Cubie A7A DTB ==="
+          if [ -f "dts/sun60i-a733-cubie-a7a.dtb" ]; then
+            CUBIE_DTB="dts/sun60i-a733-cubie-a7a.dtb"
+          else
+            CUBIE_DTB=$(find orangepi-build/ -name "sun60i-a733-cubie-a7a.dtb" 2>/dev/null | head -n 1)
           fi
           echo "Using Cubie A7A DTB from: $CUBIE_DTB"
           sudo cp -v "$CUBIE_DTB" "$MNT/boot/sun60i-a733-cubie-a7a.dtb"
+          sudo mkdir -p "$MNT/boot/dtb/allwinner"
           sudo cp -v "$CUBIE_DTB" "$MNT/boot/dtb/allwinner/sun60i-a733-cubie-a7a.dtb"
           sudo cp -v "$CUBIE_DTB" "$MNT/boot/dtb/allwinner/sun60i-a733-orangepi-4-pro.dtb"
           find "$MNT/boot/dtb-"* -maxdepth 2 -name "allwinner" -exec sudo cp -v "$CUBIE_DTB" {}/sun60i-a733-cubie-a7a.dtb \; 2>/dev/null || true
@@ -202,24 +208,27 @@ jobs:
             fi
           fi
 
-          # 3. Configure Bootloader Environment & Root Mount
+          # 3. Configure Bootloader Environment & Root Mount (Default Console on tty2)
           sudo tee "$MNT/boot/radxaEnv.txt" > /dev/null << 'ENV_EOF'
-          verbosity=7
-          bootlogo=false
-          console=both
-          overlay_prefix=sun60i-a733
-          fdtfile=allwinner/sun60i-a733-cubie-a7a.dtb
-          rootdev=/dev/mmcblk0p1
-          rootfstype=ext4
-          extraargs=console=tty1 console=ttyS0,115200 earlyprintk=sunxi-uart,0x02500000 cma=256M systemd.show_status=1 systemd.default_standard_output=journal+console systemd.default_standard_error=journal+console
-          ENV_EOF
+verbosity=7
+bootlogo=false
+console=both
+overlay_prefix=sun60i-a733
+fdtfile=allwinner/sun60i-a733-cubie-a7a.dtb
+rootdev=/dev/mmcblk0p1
+rootfstype=ext4
+extraargs=console=ttyS0,115200 console=tty2 earlyprintk=sunxi-uart,0x02500000 cma=256M systemd.show_status=1 systemd.default_standard_output=journal+console systemd.default_standard_error=journal+console
+ENV_EOF
           sudo cp -v "$MNT/boot/radxaEnv.txt" "$MNT/boot/orangepiEnv.txt"
           sudo cp -v "$MNT/boot/radxaEnv.txt" "$MNT/boot/a733-allwinnerEnv.txt"
 
           # 4. Install repo boot.cmd (with dual console & discovery), patch radxaEnv fallback, and recompile boot.scr
           [ -f "boot/boot.cmd" ] && sudo cp -v boot/boot.cmd "$MNT/boot/boot.cmd"
+          if grep -q "console=tty1" "$MNT/boot/boot.cmd"; then
+            sudo sed -i 's|console=tty1|console=tty2|g' "$MNT/boot/boot.cmd"
+          fi
           sudo sed -i 's/if test -e ${devtype} ${devnum} ${prefix}orangepiEnv.txt; then/if test -e ${devtype} ${devnum} ${prefix}radxaEnv.txt; then\n\tload ${devtype} ${devnum} ${load_addr} ${prefix}radxaEnv.txt\n\tenv import -t ${load_addr} ${filesize}\nelif test -e ${devtype} ${devnum} ${prefix}orangepiEnv.txt; then/' "$MNT/boot/boot.cmd"
-          sudo mkimage -C none -A arm -T script -d "$MNT/boot/boot.cmd" "$MNT/boot/boot.scr"
+          sudo mkimage -C none -A arm64 -T script -d "$MNT/boot/boot.cmd" "$MNT/boot/boot.scr"
 
           # 5. Fix /etc/fstab (preserve dynamic discovery / ensure clean root mount)
           if ! grep -q "/ ext4" "$MNT/etc/fstab"; then
@@ -229,27 +238,27 @@ jobs:
           # 6. Hostname and Hosts
           echo "radxa-cubie-a7a" | sudo tee "$MNT/etc/hostname"
           sudo tee "$MNT/etc/hosts" > /dev/null << 'HOSTS_EOF'
-          127.0.0.1   localhost
-          127.0.1.1   radxa-cubie-a7a
-          ::1         localhost radxa-cubie-a7a ip6-localhost ip6-loopback
-          fe00::0     ip6-localnet
-          ff00::0     ip6-mcastprefix
-          ff02::1     ip6-allnodes
-          ff02::2     ip6-allrouters
-          HOSTS_EOF
+127.0.0.1   localhost
+127.0.1.1   radxa-cubie-a7a
+::1         localhost radxa-cubie-a7a ip6-localhost ip6-loopback
+fe00::0     ip6-localnet
+ff00::0     ip6-mcastprefix
+ff02::1     ip6-allnodes
+ff02::2     ip6-allrouters
+HOSTS_EOF
 
           # 7. OS Branding
-          sudo tee "$MNT/etc/os-release" > /dev/null << 'OS_EOF'
-          PRETTY_NAME="Radxa OS 1.0.2 (Trixie)"
-          NAME="Debian GNU/Linux"
-          VERSION_ID="13"
-          VERSION="1.0.2 (trixie)"
-          VERSION_CODENAME=trixie
-          ID=debian
-          HOME_URL="https://radxa.com"
-          SUPPORT_URL="https://forum.radxa.com"
-          BUG_REPORT_URL="https://github.com/radxa"
-          OS_EOF
+          sudo tee "$MNT/etc/os-release" > /dev/null << OS_EOF
+PRETTY_NAME="Radxa OS ${VER_TAG} (${{ github.event.inputs.release || 'trixie' }})"
+NAME="Debian GNU/Linux"
+VERSION_ID="13"
+VERSION="${VER_TAG}"
+VERSION_CODENAME=${{ github.event.inputs.release || 'trixie' }}
+ID=debian
+HOME_URL="https://radxa.com"
+SUPPORT_URL="https://forum.radxa.com"
+BUG_REPORT_URL="https://github.com/radxa"
+OS_EOF
           echo "Radxa Cubie A7A Beta \l\n" | sudo tee "$MNT/etc/issue"
           echo "Radxa Cubie A7A Beta" | sudo tee "$MNT/etc/issue.net"
 
@@ -269,20 +278,64 @@ jobs:
           echo "radxa ALL=(ALL) NOPASSWD: ALL" | sudo tee "$MNT/etc/sudoers.d/010_radxa-nopasswd"
           sudo sed -i '/^orangepi:/d' "$MNT/etc/passwd" "$MNT/etc/shadow" "$MNT/etc/group" 2>/dev/null || true
 
-          # 9. Configure autologin for radxa user on serial (ttyS0) and HDMI VT (tty1)
+          # 9. Configure autologin for radxa user on serial (ttyS0), HDMI VT journal (tty1), and HDMI VT default (tty2)
           sudo mkdir -p "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d"
           sudo tee "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d/override.conf" > /dev/null <<- 'GETTY_EOF'
-          [Service]
-          ExecStart=
-          ExecStart=-/sbin/agetty -o "-p -f -- \u" --keep-baud --autologin radxa 115200,38400,9600 %I $TERM
-          GETTY_EOF
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty -o "-p -- \u" --keep-baud --autologin radxa 115200,38400,9600 %I $TERM
+Type=idle
+Restart=always
+RestartSec=0
+GETTY_EOF
 
           sudo mkdir -p "$MNT/etc/systemd/system/getty@tty1.service.d"
           sudo tee "$MNT/etc/systemd/system/getty@tty1.service.d/override.conf" > /dev/null <<- 'GETTY_EOF'
-          [Service]
-          ExecStart=
-          ExecStart=-/sbin/agetty -o "-p -f -- \u" --noclear --autologin radxa %I $TERM
-          GETTY_EOF
+[Unit]
+After=systemd-user-sessions.service plymouth-quit-wait.service
+After=rc-local.service
+
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty -o "-p -- \u" --noclear --autologin radxa %I $TERM
+Type=idle
+Restart=always
+RestartSec=0
+GETTY_EOF
+
+          sudo mkdir -p "$MNT/etc/systemd/system/getty@tty2.service.d"
+          sudo tee "$MNT/etc/systemd/system/getty@tty2.service.d/override.conf" > /dev/null <<- 'GETTY_EOF'
+[Unit]
+After=systemd-user-sessions.service
+
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty -o "-p -- \u" --noclear --autologin radxa %I $TERM
+Type=idle
+Restart=always
+RestartSec=0
+GETTY_EOF
+
+          # Configure switch-to-tty2 service for HDMI VT focus
+          sudo tee "$MNT/etc/systemd/system/switch-to-tty2.service" > /dev/null <<- 'SWITCH_EOF'
+[Unit]
+Description=Switch Active Console to TTY2
+After=multi-user.target
+After=getty@tty2.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/sh -c 'if [ -x /usr/bin/chvt ]; then /usr/bin/chvt 2; elif [ -x /bin/chvt ]; then /bin/chvt 2; fi'
+
+[Install]
+WantedBy=multi-user.target
+SWITCH_EOF
+
+          sudo rm -f "$MNT/etc/systemd/system/default.target"
+          sudo ln -sf /usr/lib/systemd/system/multi-user.target "$MNT/etc/systemd/system/default.target"
+          sudo mkdir -p "$MNT/etc/systemd/system/multi-user.target.wants"
+          sudo ln -sf /etc/systemd/system/switch-to-tty2.service "$MNT/etc/systemd/system/multi-user.target.wants/switch-to-tty2.service"
 
           if [ -d "$MNT/etc/lightdm" ]; then
             sudo mkdir -p "$MNT/etc/lightdm/lightdm.conf.d"
@@ -320,45 +373,45 @@ jobs:
 
           # 11. Dynamic fstab service
           sudo tee "$MNT/usr/lib/a733-allwinner/a733-allwinner-update-fstab" > /dev/null << 'FSTAB_SH'
-          #!/bin/bash
-          set -e
-          rootdev=$(findmnt -n -o SOURCE / 2>/dev/null || true)
-          [ -z "$rootdev" ] && rootdev=$(mount | awk '$3 == "/" {print $1}' | head -n 1)
-          if [ -n "$rootdev" ] && [ -b "$rootdev" ]; then
-              partuuid=$(blkid -s PARTUUID -o value "$rootdev" 2>/dev/null || true)
-              uuid=$(blkid -s UUID -o value "$rootdev" 2>/dev/null || true)
-              if [ -n "$partuuid" ]; then target_root="PARTUUID=${partuuid}"
-              elif [ -n "$uuid" ]; then target_root="UUID=${uuid}"
-              else target_root="${rootdev}"; fi
-              tmpfstab=$(mktemp)
-              awk -v dev="$target_root" '$2 == "/" { print dev " / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1"; next } { print }' /etc/fstab > "$tmpfstab"
-              if [ -s "$tmpfstab" ]; then
-                  mount -o remount,rw / 2>/dev/null || true
-                  cp "$tmpfstab" /etc/fstab
-                  chmod 644 /etc/fstab
-              fi
-              rm -f "$tmpfstab"
-          fi
-          exit 0
-          FSTAB_SH
+#!/bin/bash
+set -e
+rootdev=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+[ -z "$rootdev" ] && rootdev=$(mount | awk '$3 == "/" {print $1}' | head -n 1)
+if [ -n "$rootdev" ] && [ -b "$rootdev" ]; then
+    partuuid=$(blkid -s PARTUUID -o value "$rootdev" 2>/dev/null || true)
+    uuid=$(blkid -s UUID -o value "$rootdev" 2>/dev/null || true)
+    if [ -n "$partuuid" ]; then target_root="PARTUUID=${partuuid}"
+    elif [ -n "$uuid" ]; then target_root="UUID=${uuid}"
+    else target_root="${rootdev}"; fi
+    tmpfstab=$(mktemp)
+    awk -v dev="$target_root" '$2 == "/" { print dev " / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1"; next } { print }' /etc/fstab > "$tmpfstab"
+    if [ -s "$tmpfstab" ]; then
+        mount -o remount,rw / 2>/dev/null || true
+        cp "$tmpfstab" /etc/fstab
+        chmod 644 /etc/fstab
+    fi
+    rm -f "$tmpfstab"
+fi
+exit 0
+FSTAB_SH
           sudo chmod +x "$MNT/usr/lib/a733-allwinner/a733-allwinner-update-fstab"
           sudo tee "$MNT/lib/systemd/system/a733-allwinner-update-fstab.service" > /dev/null << 'FSTAB_SRV'
-          [Unit]
-          Description=Update Root Filesystem Entry in /etc/fstab Dynamically
-          DefaultDependencies=no
-          After=systemd-remount-fs.service
-          Before=local-fs.target
-          ConditionPathExists=/usr/lib/a733-allwinner/a733-allwinner-update-fstab
+[Unit]
+Description=Update Root Filesystem Entry in /etc/fstab Dynamically
+DefaultDependencies=no
+After=systemd-remount-fs.service
+Before=local-fs.target
+ConditionPathExists=/usr/lib/a733-allwinner/a733-allwinner-update-fstab
 
-          [Service]
-          Type=oneshot
-          ExecStartPre=/bin/mount -o remount,rw /
-          ExecStart=/usr/lib/a733-allwinner/a733-allwinner-update-fstab
-          RemainAfterExit=yes
+[Service]
+Type=oneshot
+ExecStartPre=/bin/mount -o remount,rw /
+ExecStart=/usr/lib/a733-allwinner/a733-allwinner-update-fstab
+RemainAfterExit=yes
 
-          [Install]
-          WantedBy=local-fs.target
-          FSTAB_SRV
+[Install]
+WantedBy=local-fs.target
+FSTAB_SRV
           sudo ln -sf /lib/systemd/system/a733-allwinner-update-fstab.service "$MNT/etc/systemd/system/local-fs.target.wants/a733-allwinner-update-fstab.service"
 
           # 12. Install AIC8800D80 Wi-Fi Driver & Firmware
@@ -392,24 +445,31 @@ jobs:
           sudo chroot "$MNT" systemctl disable fstrim.timer 2>/dev/null || sudo rm -f "$MNT/etc/systemd/system/timers.target.wants/fstrim.timer"
 
           # Run depmod
-          # KVER already discovered above
           sudo chroot "$MNT" depmod -a "$KVER"
 
+          sync
           sudo umount "$MNT"
 
-          # 15. Flash verified bootloader (boot0 + U-Boot with cross-board boot compatibility)
+          # 15. Verify and Repair Filesystem Integrity (Prevent Read-Only Mounts)
+          echo "=== Enforcing ext4 filesystem cleanliness with e2fsck ==="
+          sudo e2fsck -fy "$LOOP_PART" || true
+
+          # 16. Flash verified bootloader (boot0 + U-Boot with cross-board boot compatibility)
           echo "=== Flashing verified bootloader into $RADXA_IMG ==="
-          if [ -f "firmware/bootloader-orangepi-4-pro.bin" ]; then
-            sudo dd if="firmware/bootloader-orangepi-4-pro.bin" of="$RADXA_IMG" bs=512 seek=16 conv=notrunc status=none
-          elif [ -f "firmware/bootloader-orangepi-4-pro.bin.gz" ]; then
-            gzip -d -k "firmware/bootloader-orangepi-4-pro.bin.gz"
-            sudo dd if="firmware/bootloader-orangepi-4-pro.bin" of="$RADXA_IMG" bs=512 seek=16 conv=notrunc status=none
-          elif [ -f "firmware/bootloader-radxa-cubie-a7a.bin" ]; then
+          if [ -f "firmware/bootloader-radxa-cubie-a7a.bin" ]; then
             sudo dd if="firmware/bootloader-radxa-cubie-a7a.bin" of="$RADXA_IMG" bs=512 seek=16 conv=notrunc status=none
           elif [ -f "firmware/bootloader-radxa-cubie-a7a.bin.gz" ]; then
-            gzip -d -k "firmware/bootloader-radxa-cubie-a7a.bin.gz"
+            gzip -d -k -f "firmware/bootloader-radxa-cubie-a7a.bin.gz"
             sudo dd if="firmware/bootloader-radxa-cubie-a7a.bin" of="$RADXA_IMG" bs=512 seek=16 conv=notrunc status=none
+          elif [ -f "firmware/bootloader-orangepi-4-pro.bin" ]; then
+            sudo dd if="firmware/bootloader-orangepi-4-pro.bin" of="$RADXA_IMG" bs=512 seek=16 conv=notrunc status=none
+          elif [ -f "firmware/bootloader-orangepi-4-pro.bin.gz" ]; then
+            gzip -d -k -f "firmware/bootloader-orangepi-4-pro.bin.gz"
+            sudo dd if="firmware/bootloader-orangepi-4-pro.bin" of="$RADXA_IMG" bs=512 seek=16 conv=notrunc status=none
           fi
+
+          # Detach loop device
+          sudo losetup -d "$LOOP_DEV"
 
           echo "[+] Image transformation complete: $RADXA_IMG"
 
@@ -500,8 +560,8 @@ jobs:
         if: ${{ github.event.inputs.publish_release != 'false' }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag_name || 'radxa-cubie-a7a-beta-v1.0.2' }}
-          name: Radxa Cubie A7A Beta 1.0.2
+          tag_name: ${{ github.event.inputs.tag_name || 'radxa-cubie-a7a-v1.1.4' }}
+          name: Radxa Cubie A7A Beta ${{ github.event.inputs.tag_name || 'v1.1.4' }}
           draft: false
           prerelease: true
           body_path: release_artifacts/release_notes.md
@@ -518,7 +578,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
-          TAG: ${{ github.event.inputs.tag_name || 'radxa-cubie-a7a-beta-v1.0.2' }}
+          TAG: ${{ github.event.inputs.tag_name || 'radxa-cubie-a7a-v1.1.4' }}
         run: |
           python3 - << 'PYEOF'
           import os, sys, json, re, urllib.request
