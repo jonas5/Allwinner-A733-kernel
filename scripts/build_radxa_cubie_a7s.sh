@@ -4,7 +4,13 @@
 #
 # Generates bootable SD card image for Radxa Cubie A7S (Allwinner A733 + AXP318)
 # Features:
-#   - Authentic vendor Device Tree (sun60i-a733-cubie-a7s.dtb)
+#   - Authentic vendor Device Tree (sun60i-a733-cubie-a7s.dtb) with:
+#       * husb311-pins (PL3 gpio_in pull-up) fixing rt1711h IRQ lock & USB-C DP
+#       * aux_p / aux_n (PL10 / PL11) SBU DC-bias GPIOs on phy_switcher
+#       * allwinner,typec-dp-no-hpd opt-in software HPD lifecycle
+#   - Pre-installed AIC8800 USB Wi-Fi 6 & Bluetooth kernel drivers (6.18.63-sun60iw2)
+#   - Pre-installed AIC8800D80 firmware & calibration tables with symlinks
+#   - Automatic aic8800-bringup.service for automated Wi-Fi/BT bring-up
 #   - Universal bootloader (bootloader-radxa-cubie.bin)
 #   - Verified clean ext4 filesystem (e2fsck -fy)
 #   - Proper hostname & /etc/hosts resolution (radxa-cubie-a7s)
@@ -16,8 +22,8 @@
 # Usage:
 #   ./build_radxa_cubie_a7s.sh [VERSION] [--upload]
 # Example:
-#   ./build_radxa_cubie_a7s.sh 1.1.5-beta
-#   ./build_radxa_cubie_a7s.sh 1.1.5-beta --upload
+#   ./build_radxa_cubie_a7s.sh 1.1.6-beta
+#   ./build_radxa_cubie_a7s.sh 1.1.6-beta --upload
 # ==============================================================================
 set -euo pipefail
 
@@ -28,8 +34,9 @@ DTB_FILE="/srv/artifacts/sun60i-a733-cubie-a7s.dtb"
 BASE_IMG="/srv/storage/full_18.img"
 FIX_BUNDLE="/srv/storage/u-boot_partition_fix.sh"
 RELEASE_DIR="/srv/storage/local-releases/radxa-cubie-a7s"
+AIC_DRV_DIR="/srv/storage/aic8800_usb_drivers_6.18.63"
 
-VERSION="${1:-1.1.5-beta}"
+VERSION="${1:-1.1.6-beta}"
 DO_UPLOAD="no"
 for arg in "$@"; do
   if [ "$arg" = "--upload" ]; then
@@ -109,6 +116,48 @@ for envfile in radxaEnv.txt orangepiEnv.txt a733-allwinnerEnv.txt; do
   fi
 done
 
+echo "[*] Installing AIC8800 USB Wi-Fi 6 and Bluetooth modules..."
+mkdir -p "$MNT/usr/lib/modules/6.18.63-sun60iw2/kernel/drivers/net/wireless/aic8800"
+mkdir -p "$MNT/usr/lib/modules/6.18.63-sun60iw2/kernel/drivers/bluetooth"
+if [ -d "$AIC_DRV_DIR" ]; then
+  cp -f "$AIC_DRV_DIR/aic_load_fw.ko" "$MNT/usr/lib/modules/6.18.63-sun60iw2/kernel/drivers/net/wireless/aic8800/"
+  cp -f "$AIC_DRV_DIR/aic8800_fdrv.ko" "$MNT/usr/lib/modules/6.18.63-sun60iw2/kernel/drivers/net/wireless/aic8800/"
+  cp -f "$AIC_DRV_DIR/aic_btusb.ko" "$MNT/usr/lib/modules/6.18.63-sun60iw2/kernel/drivers/bluetooth/"
+  chroot "$MNT" depmod -a 6.18.63-sun60iw2 2>/dev/null || true
+fi
+
+echo "[*] Installing AIC8800 firmware and userconfig symlinks..."
+mkdir -p "$MNT/usr/lib/firmware/aic8800" "$MNT/usr/lib/firmware/aic8800D80" "$MNT/usr/lib/firmware/aic8800d80"
+if [ -d "/srv/kernel/radxa-aic8800/src/USB/driver_fw/fw/aic8800D80" ]; then
+  cp -rf /srv/kernel/radxa-aic8800/src/USB/driver_fw/fw/aic8800D80/* "$MNT/usr/lib/firmware/aic8800D80/"
+  cp -rf /srv/kernel/radxa-aic8800/src/USB/driver_fw/fw/aic8800D80/* "$MNT/usr/lib/firmware/aic8800d80/"
+  cp -rf /srv/kernel/radxa-aic8800/src/USB/driver_fw/fw/aic8800D80/* "$MNT/usr/lib/firmware/aic8800/"
+fi
+ln -sf aic8800D80/aic_userconfig_8800d80.txt "$MNT/usr/lib/firmware/aic_userconfig_8800d80.txt" 2>/dev/null || true
+ln -sf aic8800D80/aic_powerlimit_8800d80.txt "$MNT/usr/lib/firmware/aic_powerlimit_8800d80.txt" 2>/dev/null || true
+
+echo "[*] Installing aic8800-bringup service..."
+cp -f /srv/storage/aic8800-bringup.sh "$MNT/usr/local/bin/aic8800-bringup.sh"
+chmod +x "$MNT/usr/local/bin/aic8800-bringup.sh"
+
+cat << 'AIC_SVC' > "$MNT/etc/systemd/system/aic8800-bringup.service"
+[Unit]
+Description=AIC8800 USB Wi-Fi 6 and Bluetooth Hardware Initialization
+After=basic.target network-pre.target
+Before=network.target NetworkManager.service wpa_supplicant.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/aic8800-bringup.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+AIC_SVC
+
+mkdir -p "$MNT/etc/systemd/system/multi-user.target.wants"
+ln -sf /etc/systemd/system/aic8800-bringup.service "$MNT/etc/systemd/system/multi-user.target.wants/aic8800-bringup.service" 2>/dev/null || true
+
 echo "[*] Updating version strings to ${VERSION}..."
 for f in os-release issue issue.net radxa-release motd; do
   if [ -f "$MNT/etc/$f" ]; then
@@ -147,7 +196,7 @@ After=systemd-user-sessions.service
 
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty -o '-p -- \u' --noclear --autologin radxa %I $TERM
+ExecStart=-/sbin/agetty --noclear --autologin radxa %I $TERM
 Type=idle
 Restart=always
 RestartSec=0
@@ -161,7 +210,7 @@ After=rc-local.service
 
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty -o '-p -- \u' --noclear --autologin radxa %I $TERM
+ExecStart=-/sbin/agetty --noclear --autologin radxa %I $TERM
 Type=idle
 Restart=always
 RestartSec=0
@@ -171,7 +220,7 @@ mkdir -p "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d"
 cat << 'SGETTY_OVERRIDE' > "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d/override.conf"
 [Service]
 ExecStart=
-ExecStart=-/sbin/agetty -o '-p -- \u' --keep-baud --autologin radxa 115200,38400,9600 %I $TERM
+ExecStart=-/sbin/agetty --keep-baud --autologin radxa 115200,38400,9600 %I $TERM
 Type=idle
 Restart=always
 RestartSec=0
@@ -207,7 +256,7 @@ e2fsck -fy "${LOOP_DEV}p1" || true
 losetup -d "$LOOP_DEV"
 trap - EXIT
 
-echo "[*] Compressing image with multicore xz (-3 fast)..."
+echo "[*] Compressing image with multicore xz fast..."
 rm -f "$OUT_XZ" "${OUT_XZ}.sha256"
 xz -T0 -v -3 "$OUT_IMG"
 
@@ -224,10 +273,10 @@ if [ "$DO_UPLOAD" = "yes" ]; then
   echo "[*] Publishing release radxa-cubie-a7s-v${VERSION} on GitHub..."
   cat << NOTES_EOF > /tmp/rel_notes_a7s.md
 Radxa Cubie A7S ${VERSION} official release:
-- **Hardware Integration**: Authentic \`sun60i-a733-cubie-a7s.dtb\` with AXP318 PMIC, Gigabit Ethernet, and PowerVR GPU support.
+- **Type-C DisplayPort & Controller**: Fixed \`rt1711h\` / \`husb311\` Type-C controller probe by declaring dedicated \`husb311_pins\` (\`PL3\` \`gpio_in\` with \`bias-pull-up\`), preventing GPIO lock conflicts. Wired AUX DC-bias GPIOs (\`PL10\` / \`PL11\`) and configured opt-in software HPD lifecycle for DisplayPort over Type-C.
+- **AIC8800 Wi-Fi 6 & Bluetooth**: Built and integrated native USB drivers (\`aic_load_fw.ko\`, \`aic8800_fdrv.ko\`, \`aic_btusb.ko\`) matching \`6.18.63-sun60iw2\` vermagic, with full firmware binaries and calibration profiles in \`/lib/firmware/\`.
 - **Fixed /etc/hosts Resolution**: Synchronized \`/etc/hosts\` with hostname \`radxa-cubie-a7s\` (resolving sudo warning \`unable to resolve host radxa-cubie-a7s\`).
-- **Dedicated A7S MOTD Banner**: Corrected Figlet banner geometry without duplicate prints.
-- **Pristine VT2 Console**: Default \`console=tty2\` with automatic systemd console switch.
+- **Clean Agetty Console Configuration**: Clean autologin overrides without escape sequence warnings on \`tty1\`, \`tty2\`, and \`ttyS0\`.
 - **Filesystem Integrity**: Checked and clean ext4 filesystem without corruption.
 NOTES_EOF
 
