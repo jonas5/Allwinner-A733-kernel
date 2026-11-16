@@ -210,15 +210,15 @@ jobs:
 
           # 3. Configure Bootloader Environment & Root Mount (Default Console on tty2)
           sudo tee "$MNT/boot/radxaEnv.txt" > /dev/null << 'ENV_EOF'
-verbosity=7
-bootlogo=false
-console=both
-overlay_prefix=sun60i-a733
-fdtfile=allwinner/sun60i-a733-cubie-a7a.dtb
-rootdev=/dev/mmcblk0p1
-rootfstype=ext4
-extraargs=console=ttyS0,115200 console=tty2 earlyprintk=sunxi-uart,0x02500000 cma=256M systemd.show_status=1 systemd.default_standard_output=journal+console systemd.default_standard_error=journal+console
-ENV_EOF
+          verbosity=7
+          bootlogo=false
+          console=both
+          overlay_prefix=sun60i-a733
+          fdtfile=allwinner/sun60i-a733-cubie-a7a.dtb
+          rootdev=/dev/mmcblk0p1
+          rootfstype=ext4
+          extraargs=console=ttyS0,115200 console=tty2 earlyprintk=sunxi-uart,0x02500000 cma=256M systemd.show_status=1 systemd.default_standard_output=journal+console systemd.default_standard_error=journal+console
+          ENV_EOF
           sudo cp -v "$MNT/boot/radxaEnv.txt" "$MNT/boot/orangepiEnv.txt"
           sudo cp -v "$MNT/boot/radxaEnv.txt" "$MNT/boot/a733-allwinnerEnv.txt"
 
@@ -238,27 +238,27 @@ ENV_EOF
           # 6. Hostname and Hosts
           echo "radxa-cubie-a7a" | sudo tee "$MNT/etc/hostname"
           sudo tee "$MNT/etc/hosts" > /dev/null << 'HOSTS_EOF'
-127.0.0.1   localhost
-127.0.1.1   radxa-cubie-a7a
-::1         localhost radxa-cubie-a7a ip6-localhost ip6-loopback
-fe00::0     ip6-localnet
-ff00::0     ip6-mcastprefix
-ff02::1     ip6-allnodes
-ff02::2     ip6-allrouters
-HOSTS_EOF
+          127.0.0.1   localhost
+          127.0.1.1   radxa-cubie-a7a
+          ::1         localhost radxa-cubie-a7a ip6-localhost ip6-loopback
+          fe00::0     ip6-localnet
+          ff00::0     ip6-mcastprefix
+          ff02::1     ip6-allnodes
+          ff02::2     ip6-allrouters
+          HOSTS_EOF
 
           # 7. OS Branding
           sudo tee "$MNT/etc/os-release" > /dev/null << OS_EOF
-PRETTY_NAME="Radxa OS ${VER_TAG} (${{ github.event.inputs.release || 'trixie' }})"
-NAME="Debian GNU/Linux"
-VERSION_ID="13"
-VERSION="${VER_TAG}"
-VERSION_CODENAME=${{ github.event.inputs.release || 'trixie' }}
-ID=debian
-HOME_URL="https://radxa.com"
-SUPPORT_URL="https://forum.radxa.com"
-BUG_REPORT_URL="https://github.com/radxa"
-OS_EOF
+          PRETTY_NAME="Radxa OS ${VER_TAG} (${{ github.event.inputs.release || 'trixie' }})"
+          NAME="Debian GNU/Linux"
+          VERSION_ID="13"
+          VERSION="${VER_TAG}"
+          VERSION_CODENAME=${{ github.event.inputs.release || 'trixie' }}
+          ID=debian
+          HOME_URL="https://radxa.com"
+          SUPPORT_URL="https://forum.radxa.com"
+          BUG_REPORT_URL="https://github.com/radxa"
+          OS_EOF
           echo "Radxa Cubie A7A Beta \l\n" | sudo tee "$MNT/etc/issue"
           echo "Radxa Cubie A7A Beta" | sudo tee "$MNT/etc/issue.net"
 
@@ -281,56 +281,56 @@ OS_EOF
           # 9. Configure autologin for radxa user on serial (ttyS0), HDMI VT journal (tty1), and HDMI VT default (tty2)
           sudo mkdir -p "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d"
           sudo tee "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d/override.conf" > /dev/null <<- 'GETTY_EOF'
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty -o "-p -- \u" --keep-baud --autologin radxa 115200,38400,9600 %I $TERM
-Type=idle
-Restart=always
-RestartSec=0
-GETTY_EOF
+          [Service]
+          ExecStart=
+          ExecStart=-/sbin/agetty -o "-p -- \u" --keep-baud --autologin radxa 115200,38400,9600 %I $TERM
+          Type=idle
+          Restart=always
+          RestartSec=0
+          GETTY_EOF
 
           sudo mkdir -p "$MNT/etc/systemd/system/getty@tty1.service.d"
           sudo tee "$MNT/etc/systemd/system/getty@tty1.service.d/override.conf" > /dev/null <<- 'GETTY_EOF'
-[Unit]
-After=systemd-user-sessions.service plymouth-quit-wait.service
-After=rc-local.service
+          [Unit]
+          After=systemd-user-sessions.service plymouth-quit-wait.service
+          After=rc-local.service
 
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty -o "-p -- \u" --noclear --autologin radxa %I $TERM
-Type=idle
-Restart=always
-RestartSec=0
-GETTY_EOF
+          [Service]
+          ExecStart=
+          ExecStart=-/sbin/agetty -o "-p -- \u" --noclear --autologin radxa %I $TERM
+          Type=idle
+          Restart=always
+          RestartSec=0
+          GETTY_EOF
 
           sudo mkdir -p "$MNT/etc/systemd/system/getty@tty2.service.d"
           sudo tee "$MNT/etc/systemd/system/getty@tty2.service.d/override.conf" > /dev/null <<- 'GETTY_EOF'
-[Unit]
-After=systemd-user-sessions.service
+          [Unit]
+          After=systemd-user-sessions.service
 
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty -o "-p -- \u" --noclear --autologin radxa %I $TERM
-Type=idle
-Restart=always
-RestartSec=0
-GETTY_EOF
+          [Service]
+          ExecStart=
+          ExecStart=-/sbin/agetty -o "-p -- \u" --noclear --autologin radxa %I $TERM
+          Type=idle
+          Restart=always
+          RestartSec=0
+          GETTY_EOF
 
           # Configure switch-to-tty2 service for HDMI VT focus
           sudo tee "$MNT/etc/systemd/system/switch-to-tty2.service" > /dev/null <<- 'SWITCH_EOF'
-[Unit]
-Description=Switch Active Console to TTY2
-After=multi-user.target
-After=getty@tty2.service
+          [Unit]
+          Description=Switch Active Console to TTY2
+          After=multi-user.target
+          After=getty@tty2.service
 
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=/bin/sh -c 'if [ -x /usr/bin/chvt ]; then /usr/bin/chvt 2; elif [ -x /bin/chvt ]; then /bin/chvt 2; fi'
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart=/bin/sh -c 'if [ -x /usr/bin/chvt ]; then /usr/bin/chvt 2; elif [ -x /bin/chvt ]; then /bin/chvt 2; fi'
 
-[Install]
-WantedBy=multi-user.target
-SWITCH_EOF
+          [Install]
+          WantedBy=multi-user.target
+          SWITCH_EOF
 
           sudo rm -f "$MNT/etc/systemd/system/default.target"
           sudo ln -sf /usr/lib/systemd/system/multi-user.target "$MNT/etc/systemd/system/default.target"
@@ -373,45 +373,45 @@ SWITCH_EOF
 
           # 11. Dynamic fstab service
           sudo tee "$MNT/usr/lib/a733-allwinner/a733-allwinner-update-fstab" > /dev/null << 'FSTAB_SH'
-#!/bin/bash
-set -e
-rootdev=$(findmnt -n -o SOURCE / 2>/dev/null || true)
-[ -z "$rootdev" ] && rootdev=$(mount | awk '$3 == "/" {print $1}' | head -n 1)
-if [ -n "$rootdev" ] && [ -b "$rootdev" ]; then
-    partuuid=$(blkid -s PARTUUID -o value "$rootdev" 2>/dev/null || true)
-    uuid=$(blkid -s UUID -o value "$rootdev" 2>/dev/null || true)
-    if [ -n "$partuuid" ]; then target_root="PARTUUID=${partuuid}"
-    elif [ -n "$uuid" ]; then target_root="UUID=${uuid}"
-    else target_root="${rootdev}"; fi
-    tmpfstab=$(mktemp)
-    awk -v dev="$target_root" '$2 == "/" { print dev " / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1"; next } { print }' /etc/fstab > "$tmpfstab"
-    if [ -s "$tmpfstab" ]; then
-        mount -o remount,rw / 2>/dev/null || true
-        cp "$tmpfstab" /etc/fstab
-        chmod 644 /etc/fstab
-    fi
-    rm -f "$tmpfstab"
-fi
-exit 0
-FSTAB_SH
+          #!/bin/bash
+          set -e
+          rootdev=$(findmnt -n -o SOURCE / 2>/dev/null || true)
+          [ -z "$rootdev" ] && rootdev=$(mount | awk '$3 == "/" {print $1}' | head -n 1)
+          if [ -n "$rootdev" ] && [ -b "$rootdev" ]; then
+          partuuid=$(blkid -s PARTUUID -o value "$rootdev" 2>/dev/null || true)
+          uuid=$(blkid -s UUID -o value "$rootdev" 2>/dev/null || true)
+          if [ -n "$partuuid" ]; then target_root="PARTUUID=${partuuid}"
+          elif [ -n "$uuid" ]; then target_root="UUID=${uuid}"
+          else target_root="${rootdev}"; fi
+          tmpfstab=$(mktemp)
+          awk -v dev="$target_root" '$2 == "/" { print dev " / ext4 defaults,noatime,commit=600,errors=remount-ro 0 1"; next } { print }' /etc/fstab > "$tmpfstab"
+          if [ -s "$tmpfstab" ]; then
+          mount -o remount,rw / 2>/dev/null || true
+          cp "$tmpfstab" /etc/fstab
+          chmod 644 /etc/fstab
+          fi
+          rm -f "$tmpfstab"
+          fi
+          exit 0
+          FSTAB_SH
           sudo chmod +x "$MNT/usr/lib/a733-allwinner/a733-allwinner-update-fstab"
           sudo tee "$MNT/lib/systemd/system/a733-allwinner-update-fstab.service" > /dev/null << 'FSTAB_SRV'
-[Unit]
-Description=Update Root Filesystem Entry in /etc/fstab Dynamically
-DefaultDependencies=no
-After=systemd-remount-fs.service
-Before=local-fs.target
-ConditionPathExists=/usr/lib/a733-allwinner/a733-allwinner-update-fstab
+          [Unit]
+          Description=Update Root Filesystem Entry in /etc/fstab Dynamically
+          DefaultDependencies=no
+          After=systemd-remount-fs.service
+          Before=local-fs.target
+          ConditionPathExists=/usr/lib/a733-allwinner/a733-allwinner-update-fstab
 
-[Service]
-Type=oneshot
-ExecStartPre=/bin/mount -o remount,rw /
-ExecStart=/usr/lib/a733-allwinner/a733-allwinner-update-fstab
-RemainAfterExit=yes
+          [Service]
+          Type=oneshot
+          ExecStartPre=/bin/mount -o remount,rw /
+          ExecStart=/usr/lib/a733-allwinner/a733-allwinner-update-fstab
+          RemainAfterExit=yes
 
-[Install]
-WantedBy=local-fs.target
-FSTAB_SRV
+          [Install]
+          WantedBy=local-fs.target
+          FSTAB_SRV
           sudo ln -sf /lib/systemd/system/a733-allwinner-update-fstab.service "$MNT/etc/systemd/system/local-fs.target.wants/a733-allwinner-update-fstab.service"
 
           # 12. Install AIC8800D80 Wi-Fi Driver & Firmware
