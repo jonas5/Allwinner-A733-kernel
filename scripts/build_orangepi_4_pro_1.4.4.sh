@@ -1,0 +1,337 @@
+#!/bin/bash
+set -euo pipefail
+
+VERSION="1.4.4"
+BOARD_NAME="opi4pro"
+MODEL_TITLE="Orange Pi 4 Pro"
+BASE_REF="/srv/storage/daily-workflow/run_20261111_170117/Orangepi4pro_1.0.2_debian_trixie_minimal_linux6.18.63.img"
+WORKDIR="/srv/storage"
+TARGET_NAME="Orangepi4pro_${VERSION}_debian_trixie_minimal_linux6.18.64"
+OUT_IMG="${WORKDIR}/${TARGET_NAME}.img"
+OUT_XZ="${OUT_IMG}.xz"
+RELEASE_DIR="/srv/storage/local-releases/orangepi-4-pro"
+FIXED_DTB="/srv/orangepi-4-pro/dtb/sun60i-a733-orangepi-4-pro-6.18.64.dtb"
+SPLASH_BOOT="/srv/kernel/orangepi-build/external/packages/blobs/splash/orangepi-u-boot.bmp"
+SPLASH_LOGO="/srv/kernel/orangepi-build/external/packages/blobs/splash/logo.bmp"
+DEB_DIR="/srv/kernel/orangepi-build/output/debs"
+WG_DEB="/srv/orangepi-4-pro/debs/wireguard-tools_1.0.20210914-3_arm64.deb"
+
+echo "======================================================================"
+echo "  Building Authentic ${MODEL_TITLE} Release: ${VERSION}"
+echo "  Target Kernel: 6.18.64 (sun60iw2)"
+echo "  Base Reference: ${BASE_REF}"
+echo "  Bootloader Headers: 100% UNTOUCHED (Authentic eGON.BT0)"
+echo "  WireGuard Client Config: NOT DEPLOYED (tools only)"
+echo "======================================================================"
+
+if [ ! -f "$BASE_REF" ]; then
+  echo "[-] Error: Base image $BASE_REF not found!" >&2
+  exit 1
+fi
+
+if [ ! -f "$FIXED_DTB" ]; then
+  echo "[-] Error: Fixed DTB $FIXED_DTB not found!" >&2
+  exit 1
+fi
+
+echo "[*] Step 1: Cloning base image to ${OUT_IMG}..."
+cp -f "$BASE_REF" "$OUT_IMG"
+
+LOOP_DEV=$(losetup -fP --show "$OUT_IMG")
+echo "[*] Attached target image to ${LOOP_DEV}"
+
+cleanup() {
+  echo "[*] Cleaning up mounts and loop device..."
+  sync || true
+  if [ -n "${MNT:-}" ]; then
+    umount -l "$MNT/dev/pts" 2>/dev/null || true
+    umount -l "$MNT/dev" 2>/dev/null || true
+    umount -l "$MNT/proc" 2>/dev/null || true
+    umount -l "$MNT/sys" 2>/dev/null || true
+    if mountpoint -q "$MNT" 2>/dev/null; then
+      umount "$MNT" || true
+    fi
+    rm -rf "$MNT" || true
+  fi
+  losetup -d "$LOOP_DEV" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+MNT="/mnt/opi4pro_144_$$"
+mkdir -p "$MNT"
+mount "${LOOP_DEV}p1" "$MNT"
+
+echo "[*] Step 2: Installing authentic Orange Pi splash graphics & purging foreign files..."
+cp -f "$SPLASH_BOOT" "$MNT/boot/boot.bmp"
+cp -f "$SPLASH_LOGO" "$MNT/boot/logo.bmp"
+rm -f "$MNT/etc/radxa-release"
+rm -f "$MNT/boot/radxaEnv.txt" "$MNT/boot/bananapiEnv.txt" "$MNT/boot/a733-allwinnerEnv.txt" 2>/dev/null || true
+
+# Prepare chroot mounts
+mount -t proc /proc "$MNT/proc"
+mount -t sysfs /sys "$MNT/sys"
+mount --bind /dev "$MNT/dev"
+mount --bind /dev/pts "$MNT/dev/pts"
+
+echo "[*] Step 3: Installing 6.18.64 kernel, headers, and wireguard-tools debs..."
+mkdir -p "$MNT/tmp/debs"
+cp -f "$DEB_DIR"/linux-image-next-sun60iw2_1.1.0_arm64.deb "$MNT/tmp/debs/"
+cp -f "$DEB_DIR"/linux-dtb-next-sun60iw2_1.1.0_arm64.deb "$MNT/tmp/debs/"
+cp -f "$DEB_DIR"/linux-headers-next-sun60iw2_1.1.0_arm64.deb "$MNT/tmp/debs/"
+if [ -f "$WG_DEB" ]; then
+  cp -f "$WG_DEB" "$MNT/tmp/debs/"
+fi
+
+# Run dpkg inside chroot
+chroot "$MNT" /bin/bash -c "
+  dpkg -i /tmp/debs/linux-image-*.deb /tmp/debs/linux-dtb-*.deb /tmp/debs/linux-headers-*.deb
+  if [ -f /tmp/debs/wireguard-tools_*.deb ]; then
+    dpkg -i /tmp/debs/wireguard-tools_*.deb || true
+  fi
+  rm -rf /tmp/debs
+"
+
+# Ensure NO wireguard client config is deployed
+rm -rf "$MNT/etc/wireguard"/* 2>/dev/null || true
+mkdir -p "$MNT/etc/wireguard"
+chmod 700 "$MNT/etc/wireguard"
+
+
+# Purge older kernel and initrd files from /boot to avoid ambiguity
+rm -f "$MNT/boot/"*6.18.62* "$MNT/boot/"*6.18.63* 2>/dev/null || true
+
+echo "[*] Step 4: Generating uImage for 6.18.64 and ensuring uInitrd..."
+if [ ! -f "$MNT/boot/vmlinux-6.18.64-sun60iw2" ]; then
+  echo "[-] Error: vmlinux-6.18.64-sun60iw2 not found in /boot!" >&2
+  exit 1
+fi
+mkimage -A arm -O linux -T kernel -C none -a 0x41000000 -e 0x41000000 -n "Linux kernel" -d "$MNT/boot/vmlinux-6.18.64-sun60iw2" "$MNT/boot/uImage"
+
+# Ensure uInitrd link points to 6.18.64 initrd
+INITRD_SRC=$(ls "$MNT/boot/" | grep "^initrd.img-6.18.64" | head -n1 || true)
+if [ -n "$INITRD_SRC" ]; then
+  echo "[*] Generating uInitrd from $INITRD_SRC..."
+  mkimage -A arm -O linux -T ramdisk -C none -a 0 -e 0 -n "uInitrd" -d "$MNT/boot/$INITRD_SRC" "$MNT/boot/uInitrd-6.18.64-sun60iw2"
+  ln -sf uInitrd-6.18.64-sun60iw2 "$MNT/boot/uInitrd"
+fi
+
+echo "[*] Step 5: Installing verified 6.18.64 DTB (broken-cd, non-removable, eee-broken, no lpi_en)..."
+cp -f "$FIXED_DTB" "$MNT/boot/sun60i-a733-orangepi-4-pro.dtb"
+mkdir -p "$MNT/boot/dtb/allwinner" "$MNT/boot/dtb-6.18.64-sun60iw2/allwinner"
+cp -f "$FIXED_DTB" "$MNT/boot/dtb/allwinner/sun60i-a733-orangepi-4-pro.dtb"
+cp -f "$FIXED_DTB" "$MNT/boot/dtb-6.18.64-sun60iw2/allwinner/sun60i-a733-orangepi-4-pro.dtb"
+rm -f "$MNT/boot/dtb"
+ln -sf dtb-6.18.64-sun60iw2 "$MNT/boot/dtb"
+
+echo "[*] Step 6: Updating boot.cmd for proper dual-console ordering (serial first, tty1 last)..."
+cat << 'BOOTCMD_EOF' > "$MNT/boot/boot.cmd"
+# DO NOT EDIT THIS FILE
+# Please edit /boot/orangepiEnv.txt to set supported parameters
+
+setenv load_addr "0x43100000"
+setenv overlay_error "false"
+setenv verbosity "7"
+setenv console "both"
+setenv bootlogo "false"
+setenv rootfstype "ext4"
+setenv docker_optimizations "on"
+setenv earlycon "on"
+
+echo "Boot script loaded from ${devtype} ${devnum}"
+
+if test -e ${devtype} ${devnum} ${prefix}orangepiEnv.txt; then
+	load ${devtype} ${devnum} ${load_addr} ${prefix}orangepiEnv.txt
+	env import -t ${load_addr} ${filesize}
+fi
+
+if test "${logo}" = "disabled"; then setenv logo "logo.nologo"; fi
+
+# Dual console support: ttyS0 first, tty1 LAST so tty1 owns active display & VT
+if test "${console}" = "display"; then setenv consoleargs "console=tty1"; fi
+if test "${console}" = "serial"; then setenv consoleargs "console=ttyS0,115200"; fi
+if test "${console}" = "both"; then setenv consoleargs "console=ttyS0,115200 console=tty1"; fi
+
+if test "${earlycon}" = "on"; then setenv consoleargs "earlyprintk=sunxi-uart,0x02500000 initcall_debug=0 ${consoleargs}"; fi
+if test "${bootlogo}" = "true"; then
+	setenv consoleargs "splash plymouth.ignore-serial-consoles ${consoleargs}";
+else
+	setenv consoleargs "splash=verbose ${consoleargs}"
+fi
+
+part uuid ${devtype} ${devnum}:1 partuuid
+if test -z "${rootdev}"; then rootdev=PARTUUID="${partuuid}"; fi
+
+setenv bootargs "root=${rootdev} rootwait rootdelay=1 rootfstype=${rootfstype} ${consoleargs} consoleblank=0 loglevel=${verbosity} clk_ignore_unused swiotlb=65536 usb-storage.quirks=${usbstoragequirks} ${extraargs} ${extraboardargs}"
+
+if test "${docker_optimizations}" = "on"; then setenv bootargs "${bootargs} cgroup_enable=cpuset cgroup_memory=1 cgroup_enable=memory swapaccount=1"; fi
+
+load ${devtype} ${devnum} ${ramdisk_addr_r} ${prefix}uInitrd
+load ${devtype} ${devnum} ${kernel_addr_r} ${prefix}uImage
+
+load ${devtype} ${devnum} ${fdt_addr_r} ${prefix}dtb/${fdtfile}
+fdt addr ${fdt_addr_r}
+fdt resize 65536
+for overlay_file in ${overlays}; do
+	if load ${devtype} ${devnum} ${load_addr} ${prefix}dtb/allwinner/overlay/${overlay_prefix}-${overlay_file}.dtbo; then
+		echo "Applying kernel provided DT overlay ${overlay_prefix}-${overlay_file}.dtbo"
+		fdt apply ${load_addr} || setenv overlay_error "true"
+	fi
+done
+for overlay_file in ${user_overlays}; do
+	if load ${devtype} ${devnum} ${load_addr} ${prefix}overlay-user/${overlay_file}.dtbo; then
+		echo "Applying user provided DT overlay ${overlay_file}.dtbo"
+		fdt apply ${load_addr} || setenv overlay_error "true"
+	fi
+done
+
+bootm ${kernel_addr_r} ${ramdisk_addr_r} ${fdt_addr_r}
+BOOTCMD_EOF
+
+mkimage -C none -A arm -T script -d "$MNT/boot/boot.cmd" "$MNT/boot/boot.scr"
+
+echo "[*] Step 7: Writing orangepiEnv.txt with explicit rootdev=/dev/mmcblk0p1..."
+cat << 'ENV_EOF' > "$MNT/boot/orangepiEnv.txt"
+verbosity=7
+bootlogo=false
+console=both
+earlycon=on
+overlay_prefix=sun60i-a733
+fdtfile=allwinner/sun60i-a733-orangepi-4-pro.dtb
+rootdev=/dev/mmcblk0p1
+rootfstype=ext4
+extraargs=cma=256M cpuidle.off=1
+ENV_EOF
+
+echo "[*] Step 8: Configuring interactive autologin on tty1 and ttyS0 for orangepi user..."
+rm -f "$MNT/etc/systemd/system/"*switch*tty2* 2>/dev/null || true
+rm -f "$MNT/etc/systemd/system/multi-user.target.wants/"*switch*tty2* 2>/dev/null || true
+
+mkdir -p "$MNT/etc/systemd/system/getty@tty1.service.d"
+cat << 'TTY1_OVERRIDE' > "$MNT/etc/systemd/system/getty@tty1.service.d/override.conf"
+[Unit]
+After=systemd-user-sessions.service plymouth-quit-wait.service
+After=rc-local.service
+
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin orangepi --noclear %I $TERM
+Type=idle
+Restart=always
+RestartSec=0
+TTY1_OVERRIDE
+
+mkdir -p "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d"
+cat << 'SGETTY_OVERRIDE' > "$MNT/etc/systemd/system/serial-getty@ttyS0.service.d/override.conf"
+[Service]
+ExecStart=
+ExecStart=-/sbin/agetty --autologin orangepi --keep-baud 115200,57600,38400,9600 %I $TERM
+Type=idle
+Restart=always
+RestartSec=0
+SGETTY_OVERRIDE
+
+mkdir -p "$MNT/etc/systemd/system/getty.target.wants"
+ln -sf /usr/lib/systemd/system/getty@.service "$MNT/etc/systemd/system/getty.target.wants/getty@tty1.service"
+ln -sf /usr/lib/systemd/system/serial-getty@.service "$MNT/etc/systemd/system/getty.target.wants/serial-getty@ttyS0.service"
+
+echo "[*] Step 9: Configuring Ethernet EEE/Tx-LPI stability rules and DHCP networking..."
+mkdir -p "$MNT/etc/udev/rules.d"
+cat << 'UDEV_EOF' > "$MNT/etc/udev/rules.d/99-disable-eee.rules"
+ACTION=="add", SUBSYSTEM=="net", KERNEL=="end0", RUN+="/usr/sbin/ethtool --set-eee end0 eee off tx-lpi off"
+UDEV_EOF
+
+mkdir -p "$MNT/etc/network/interfaces.d"
+cat << 'IFACE_EOF' > "$MNT/etc/network/interfaces.d/end0"
+allow-hotplug end0
+iface end0 inet dhcp
+    post-up /usr/sbin/ethtool --set-eee end0 eee off tx-lpi off || true
+IFACE_EOF
+
+mkdir -p "$MNT/etc/NetworkManager/system-connections"
+cat << 'NM_EOF' > "$MNT/etc/NetworkManager/system-connections/end0.nmconnection"
+[connection]
+id=end0
+uuid=6b3e8e7b-91c2-4874-94c6-2c7c59a35e98
+type=ethernet
+interface-name=end0
+
+[ethernet]
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+NM_EOF
+chmod 600 "$MNT/etc/NetworkManager/system-connections/end0.nmconnection"
+
+# Hostname
+echo "orangepi4pro" > "$MNT/etc/hostname"
+
+# MOTD header fix
+cat << 'MOTDEOF' > "$MNT/etc/update-motd.d/10-orangepi-header"
+#!/bin/bash
+THIS_SCRIPT="header"
+MOTD_DISABLE=""
+[[ -f /etc/default/a733-allwinner-motd ]] && . /etc/default/a733-allwinner-motd
+for f in $MOTD_DISABLE; do
+    [[ $f == $THIS_SCRIPT ]] && exit 0
+done
+. /etc/os-release
+[[ -f /etc/orangepi-release ]] && . /etc/orangepi-release
+KERNELID=$(uname -r)
+TERM=linux toilet -f standard -F metal "${BOARD_NAME:-Orange Pi 4 Pro}"
+echo -e "Welcome to \e[0;91mOrange Pi OS ${VERSION:-1.0.2} ${DISTRIBUTION_CODENAME^}[0m with \e[0;91mLinux $KERNELID[0m
+"
+MOTDEOF
+chmod +x "$MNT/etc/update-motd.d/10-orangepi-header"
+
+# Logrotate fix for hardware monitor
+mkdir -p "$MNT/etc/logrotate.d"
+cat << 'LREOF' > "$MNT/etc/logrotate.d/a733-allwinner-hardware-monitor"
+/var/log/orangepi-hardware-monitor.log {
+  rotate 12
+  weekly
+  compress
+  missingok
+  notifempty
+}
+LREOF
+
+# Disable fstrim.timer on SD card to prevent mmc_erase -110 timeouts
+rm -f "$MNT/etc/systemd/system/timers.target.wants/fstrim.timer" 2>/dev/null || true
+rm -f "$MNT/var/run/resize2fs-reboot" "$MNT/run/resize2fs-reboot" 2>/dev/null || true
+
+# Clean up chroot mounts
+umount -l "$MNT/dev/pts" 2>/dev/null || true
+umount -l "$MNT/dev" 2>/dev/null || true
+umount -l "$MNT/proc" 2>/dev/null || true
+umount -l "$MNT/sys" 2>/dev/null || true
+
+sync
+umount "$MNT"
+rm -rf "$MNT"
+unset MNT
+
+echo "[*] Step 10: Running final e2fsck filesystem integrity validation..."
+e2fsck -fy "${LOOP_DEV}p1" || true
+
+losetup -d "$LOOP_DEV"
+trap - EXIT
+
+echo "[*] Step 11: Compressing with multicore xz (-3 fast)..."
+rm -f "$OUT_XZ" "${OUT_XZ}.sha256"
+xz -T0 -v -3 "$OUT_IMG"
+
+echo "[*] Step 12: Generating SHA256 checksum..."
+sha256sum "$OUT_XZ" | awk '{print $1}' > "${OUT_XZ}.sha256"
+
+mkdir -p "$RELEASE_DIR"
+cp -f "$OUT_XZ" "$RELEASE_DIR/"
+cp -f "${OUT_XZ}.sha256" "$RELEASE_DIR/"
+
+echo "======================================================================"
+echo " [✓] ORANGE PI 4 PRO 6.18.64 BUILD COMPLETED SUCCESSFULLY!"
+echo "     Image:  $OUT_XZ"
+echo "     SHA256: $(cat "${OUT_XZ}.sha256")"
+echo "======================================================================"

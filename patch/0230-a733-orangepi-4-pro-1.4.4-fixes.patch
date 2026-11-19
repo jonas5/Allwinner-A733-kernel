@@ -1,0 +1,31 @@
+diff --git a/dts/sun60i-a733-orangepi-4-pro.dts b/dts/sun60i-a733-orangepi-4-pro.dts
+index 10bfe2b..2e33860 100644
+--- a/dts/sun60i-a733-orangepi-4-pro.dts
++++ b/dts/sun60i-a733-orangepi-4-pro.dts
+@@ -1483,12 +1483,13 @@
+ 	/*vqmmc-supply = <&reg_aldo1>;*/
+ 	/*emmc io vol 1.8v*/
+ 	/*vqmmc-supply = <&reg_cldo1>;*/
+-	status = "okay";
++	status = "disabled";
+ };
+ 
+ &mmc0 {
+ 	bus-width = <4>;
+ 	broken-cd;
++	non-removable;
+ 	cap-sd-highspeed;
+ 	sd-uhs-sdr50;
+ 	sd-uhs-ddr50;
+@@ -1755,9 +1756,9 @@
+ 		#sound-dai-cells = <0>;
+ 		compatible = "everest,es8388", "everest,es8389";
+ 		reg = <0x10>;
++		clocks = <&dcxo24M_clk>;
++		clock-names = "mclk";
+ 		assigned-clock-rates = <12288000>;
+-		//pinctrl-names = "default";
+-		//pinctrl-0 = <&i2s2m1_mclk>;
+ 	};
+ };
+ 
