@@ -24,7 +24,8 @@ on:
         description: 'Flavour / Edition'
         required: true
         default: 'minimal'
-        type: choice
+        type: desktop-xfce
+        
         options:
           - minimal
           - server
